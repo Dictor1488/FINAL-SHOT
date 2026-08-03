@@ -1,0 +1,19 @@
+{
+  "title": "FINAL SHOT",
+  "subtitle": "Last hits before destruction",
+  "fatalLabel": "DESTRUCTION",
+  "unknownVehicle": "Unknown vehicle",
+  "unknownPlayer": "Unknown player",
+  "shellAP": "AP",
+  "shellAPGold": "AP · gold",
+  "shellAPHE": "APHE",
+  "shellAPHEGold": "APHE · gold",
+  "shellAPCR": "APCR",
+  "shellAPCRGold": "APCR · gold",
+  "shellHEAT": "HEAT",
+  "shellHEATGold": "HEAT · gold",
+  "shellHE": "HE",
+  "shellHEGold": "HE · gold",
+  "shellUnknown": "?",
+  "shellUnknownGold": "? · gold"
+}

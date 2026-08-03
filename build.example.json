@@ -1,0 +1,11 @@
+{
+  "software": {
+    "python": "C:/Python27/python.exe"
+  },
+  "info": {
+    "id": "com.inq.final_shot",
+    "version": "0.1.0",
+    "name": "INQ Final Shot",
+    "description": "Shows the last received hits after the player's vehicle is destroyed"
+  }
+}

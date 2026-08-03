@@ -1,0 +1,19 @@
+{
+  "title": "ВИРІШАЛЬНИЙ ПОСТРІЛ",
+  "subtitle": "Останні влучання перед знищенням",
+  "fatalLabel": "ЗНИЩЕННЯ",
+  "unknownVehicle": "Невідома машина",
+  "unknownPlayer": "Невідомий гравець",
+  "shellAP": "ББ",
+  "shellAPGold": "ББ · голда",
+  "shellAPHE": "ББФ",
+  "shellAPHEGold": "ББФ · голда",
+  "shellAPCR": "БП",
+  "shellAPCRGold": "БП · голда",
+  "shellHEAT": "КС",
+  "shellHEATGold": "КС · голда",
+  "shellHE": "ОФ",
+  "shellHEGold": "ОФ · голда",
+  "shellUnknown": "?",
+  "shellUnknownGold": "? · голда"
+}

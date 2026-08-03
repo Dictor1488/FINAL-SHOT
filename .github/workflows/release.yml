@@ -1,0 +1,201 @@
+name: Build INQ Final Shot
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Mod version (for example 0.1.0)
+        required: true
+        default: 0.1.0
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  FLEX_VERSION: "4.16.1"
+  FLASH_PLAYER_VERSION: "32.0"
+  SWF_VERSION: "39"
+  MOD_ID: "com.inq.final_shot"
+  MOD_NAME: "INQ Final Shot"
+  MOD_DESCRIPTION: "Shows the last received hits after the player's vehicle is destroyed"
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout MARKS build libraries
+        uses: actions/checkout@v4
+        with:
+          repository: Dictor1488/MARKS
+          path: reference-marks
+          sparse-checkout: |
+            as3/libs
+          sparse-checkout-cone-mode: false
+
+      - name: Determine release version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+              $version = "${{ inputs.version }}".Trim()
+          } elseif ("${{ github.ref }}" -like "refs/tags/*") {
+              $version = "${{ github.ref_name }}".TrimStart("v")
+          } else {
+              $version = "0.1.0-ci"
+          }
+          if ($version -notmatch '^[0-9]+(\.[0-9]+){1,3}([-.][0-9A-Za-z.-]+)?$') {
+              throw "Invalid version: $version"
+          }
+          "PROJECT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python 2.7
+        shell: pwsh
+        run: |
+          choco install python2 --version=2.7.18 -y --no-progress
+          if (-not (Test-Path "C:\Python27\python.exe")) {
+              throw "Python 2.7 was not installed"
+          }
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      - name: Cache Apache Flex SDK
+        id: cache-flex
+        uses: actions/cache@v4
+        with:
+          path: C:\flex-sdk
+          key: flex-sdk-${{ env.FLEX_VERSION }}-player-${{ env.FLASH_PLAYER_VERSION }}-v1
+
+      - name: Download Apache Flex SDK
+        if: steps.cache-flex.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $urls = @(
+              "https://archive.apache.org/dist/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip",
+              "https://dlcdn.apache.org/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip"
+          )
+          $downloaded = $false
+          foreach ($url in $urls) {
+              try {
+                  Invoke-WebRequest -Uri $url -OutFile flex-sdk.zip -UseBasicParsing -TimeoutSec 300
+                  $downloaded = $true
+                  break
+              } catch {
+                  Write-Warning $_
+              }
+          }
+          if (-not $downloaded) { throw "Unable to download Apache Flex SDK" }
+          Remove-Item C:\flex-sdk -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item C:\flex-sdk-temp -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path C:\flex-sdk | Out-Null
+          Expand-Archive -Path flex-sdk.zip -DestinationPath C:\flex-sdk-temp -Force
+          $items = @(Get-ChildItem C:\flex-sdk-temp)
+          if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
+              Get-ChildItem $items[0].FullName | Move-Item -Destination C:\flex-sdk -Force
+          } else {
+              Get-ChildItem C:\flex-sdk-temp | Move-Item -Destination C:\flex-sdk -Force
+          }
+          Remove-Item flex-sdk.zip -Force
+          Remove-Item C:\flex-sdk-temp -Recurse -Force
+
+      - name: Prepare AS3 libraries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path as3\libs -Force | Out-Null
+          Copy-Item reference-marks\as3\libs\*.swc as3\libs\ -Force
+          $playerDirectory = "C:\flex-sdk\frameworks\libs\player\${{ env.FLASH_PLAYER_VERSION }}"
+          New-Item -ItemType Directory -Path $playerDirectory -Force | Out-Null
+          Copy-Item as3\libs\playerglobal.swc "$playerDirectory\playerglobal.swc" -Force
+          Copy-Item as3\libs\playerglobal.swc "C:\flex-sdk\frameworks\libs\player\playerglobal.swc" -Force
+          $flexConfig = "C:\flex-sdk\frameworks\flex-config.xml"
+          $content = Get-Content $flexConfig -Raw
+          $content = $content -replace '\{playerglobalHome\}', 'C:/flex-sdk/frameworks/libs/player'
+          Set-Content -Path $flexConfig -Value $content -Encoding utf8
+
+      - name: Build Final Shot SWF
+        shell: pwsh
+        run: |
+          $compiler = "C:\flex-sdk\bin\mxmlc.bat"
+          $sourcePath = [System.IO.Path]::GetFullPath("as3\src_flash\src")
+          $main = [System.IO.Path]::GetFullPath("as3\src_flash\src\com\inq\finalshot\FinalShotPanelBattle.as")
+          $outputDirectory = [System.IO.Path]::GetFullPath("as3\bin")
+          $output = Join-Path $outputDirectory "FinalShotPanelBattle.swf"
+          New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
+          $arguments = @(
+              "-source-path+=$sourcePath",
+              "-output=$output",
+              "-target-player=${{ env.FLASH_PLAYER_VERSION }}",
+              "-swf-version=${{ env.SWF_VERSION }}",
+              "-strict=true",
+              "-optimize=true",
+              "-warnings=true",
+              "-use-network=true"
+          )
+          Get-ChildItem "as3\libs" -Filter *.swc | ForEach-Object {
+              if ($_.Name -ne "playerglobal.swc") {
+                  $arguments += "-external-library-path+=$($_.FullName)"
+              }
+          }
+          $arguments += $main
+          & $compiler @arguments
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $output)) {
+              throw "SWF compilation failed"
+          }
+
+      - name: Create build configuration
+        shell: pwsh
+        run: |
+          $configuration = @{
+              software = @{ python = "C:/Python27/python.exe" }
+              info = @{
+                  id = "${{ env.MOD_ID }}"
+                  name = "${{ env.MOD_NAME }}"
+                  description = "${{ env.MOD_DESCRIPTION }}"
+                  version = "${{ env.PROJECT_VERSION }}"
+              }
+          }
+          $configuration | ConvertTo-Json -Depth 4 | Set-Content build.json -Encoding utf8
+
+      - name: Build WOTMOD package
+        shell: pwsh
+        run: |
+          python build.py
+          $package = "build\${{ env.MOD_ID }}_${{ env.PROJECT_VERSION }}.wotmod"
+          if (-not (Test-Path $package)) { throw "Package was not created" }
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: com.inq.final_shot-${{ env.PROJECT_VERSION }}
+          path: build/com.inq.final_shot_${{ env.PROJECT_VERSION }}.wotmod
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          commit: ${{ github.sha }}
+          name: INQ Final Shot v${{ env.PROJECT_VERSION }}
+          artifacts: build/com.inq.final_shot_${{ env.PROJECT_VERSION }}.wotmod
+          allowUpdates: true
+          removeArtifacts: true
+          replacesArtifacts: true
