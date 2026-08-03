@@ -18,12 +18,16 @@ BUILD_DIR = ROOT / 'build'
 PYTHON_SOURCES: Tuple[Path, ...] = (
     ROOT / 'python/gui/mods/mod_inq_final_shot.py',
     ROOT / 'python/gui/mods/mod_zz_inq_final_shot_health.py',
+    ROOT / 'python/gui/mods/mod_zzz_inq_final_shot_impacts.py',
+    ROOT / 'python/gui/mods/mod_zzzz_inq_final_shot_impact_view.py',
 )
 PYTHON_BYTECODE: Tuple[Path, ...] = tuple(path.with_suffix('.pyc') for path in PYTHON_SOURCES)
 
 PACKAGE_FILES: Tuple[Tuple[Path, str], ...] = (
     (PYTHON_BYTECODE[0], 'res/scripts/client/gui/mods/mod_inq_final_shot.pyc'),
     (PYTHON_BYTECODE[1], 'res/scripts/client/gui/mods/mod_zz_inq_final_shot_health.pyc'),
+    (PYTHON_BYTECODE[2], 'res/scripts/client/gui/mods/mod_zzz_inq_final_shot_impacts.pyc'),
+    (PYTHON_BYTECODE[3], 'res/scripts/client/gui/mods/mod_zzzz_inq_final_shot_impact_view.pyc'),
     (ROOT / 'as3/bin/FinalShotPanelBattle.swf', 'res/gui/flash/FinalShotPanelBattle.swf'),
     (ROOT / 'resources/in/mods/inq.final_shot/en.json', 'res/mods/inq.final_shot/en.json'),
     (ROOT / 'resources/in/mods/inq.final_shot/ru.json', 'res/mods/inq.final_shot/ru.json'),
