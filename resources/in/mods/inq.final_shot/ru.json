@@ -1,0 +1,19 @@
+{
+  "title": "РЕШАЮЩИЙ ВЫСТРЕЛ",
+  "subtitle": "Последние попадания перед уничтожением",
+  "fatalLabel": "УНИЧТОЖЕНИЕ",
+  "unknownVehicle": "Неизвестная машина",
+  "unknownPlayer": "Неизвестный игрок",
+  "shellAP": "ББ",
+  "shellAPGold": "ББ · голда",
+  "shellAPHE": "ББФ",
+  "shellAPHEGold": "ББФ · голда",
+  "shellAPCR": "БП",
+  "shellAPCRGold": "БП · голда",
+  "shellHEAT": "КС",
+  "shellHEATGold": "КС · голда",
+  "shellHE": "ОФ",
+  "shellHEGold": "ОФ · голда",
+  "shellUnknown": "?",
+  "shellUnknownGold": "? · голда"
+}
