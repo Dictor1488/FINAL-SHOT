@@ -5,11 +5,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Mod version (for example 0.1.0)
+        description: Mod version (for example 0.2.0)
         required: true
-        default: 0.1.0
+        default: 0.2.0
         type: string
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
@@ -22,7 +24,7 @@ env:
   SWF_VERSION: "39"
   MOD_ID: "com.inq.final_shot"
   MOD_NAME: "INQ Final Shot"
-  MOD_DESCRIPTION: "Shows the last received hits after the player's vehicle is destroyed"
+  MOD_DESCRIPTION: "In-battle 3D viewer for the final received hits"
 
 jobs:
   build-and-release:
@@ -32,10 +34,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Checkout MARKS build libraries
+      # The WoT Scaleform SWC libraries are kept in MARKS and copied into the
+      # project. The Flex compiler itself is restored from the default-branch
+      # cache, so PR builds no longer download the SDK after the main cache is seeded.
+      - name: Checkout WoT SWC libraries
         uses: actions/checkout@v4
         with:
           repository: Dictor1488/MARKS
+          ref: main
           path: reference-marks
           sparse-checkout: |
             as3/libs
@@ -49,7 +55,7 @@ jobs:
           } elseif ("${{ github.ref }}" -like "refs/tags/*") {
               $version = "${{ github.ref_name }}".TrimStart("v")
           } else {
-              $version = "0.1.0-ci"
+              $version = "0.2.0-ci"
           }
           if ($version -notmatch '^[0-9]+(\.[0-9]+){1,3}([-.][0-9A-Za-z.-]+)?$') {
               throw "Invalid version: $version"
@@ -76,17 +82,24 @@ jobs:
           distribution: temurin
           java-version: "11"
 
-      - name: Cache Apache Flex SDK
+      - name: Restore Apache Flex SDK
         id: cache-flex
         uses: actions/cache@v4
         with:
           path: C:\flex-sdk
-          key: flex-sdk-${{ env.FLEX_VERSION }}-player-${{ env.FLASH_PLAYER_VERSION }}-v1
+          key: flex-sdk-${{ runner.os }}-${{ env.FLEX_VERSION }}-player-${{ env.FLASH_PLAYER_VERSION }}-v2
+          restore-keys: |
+            flex-sdk-${{ runner.os }}-${{ env.FLEX_VERSION }}-player-${{ env.FLASH_PLAYER_VERSION }}-
+            flex-sdk-${{ runner.os }}-${{ env.FLEX_VERSION }}-
 
-      - name: Download Apache Flex SDK
+      - name: Download Apache Flex SDK once
         if: steps.cache-flex.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
+          if (Test-Path "C:\flex-sdk\bin\mxmlc.bat") {
+              Write-Host "Flex SDK restored with a compatible prefix cache"
+              exit 0
+          }
           $urls = @(
               "https://archive.apache.org/dist/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip",
               "https://dlcdn.apache.org/flex/${{ env.FLEX_VERSION }}/binaries/apache-flex-sdk-${{ env.FLEX_VERSION }}-bin.zip"
@@ -115,7 +128,7 @@ jobs:
           Remove-Item flex-sdk.zip -Force
           Remove-Item C:\flex-sdk-temp -Recurse -Force
 
-      - name: Prepare AS3 libraries
+      - name: Prepare local WoT SWC libraries
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path as3\libs -Force | Out-Null
@@ -128,35 +141,44 @@ jobs:
           $content = Get-Content $flexConfig -Raw
           $content = $content -replace '\{playerglobalHome\}', 'C:/flex-sdk/frameworks/libs/player'
           Set-Content -Path $flexConfig -Value $content -Encoding utf8
+          Get-ChildItem as3\libs\*.swc | Select-Object Name, Length
 
-      - name: Build Final Shot SWF
+      - name: Build Final Shot SWFs
         shell: pwsh
         run: |
           $compiler = "C:\flex-sdk\bin\mxmlc.bat"
           $sourcePath = [System.IO.Path]::GetFullPath("as3\src_flash\src")
-          $main = [System.IO.Path]::GetFullPath("as3\src_flash\src\com\inq\finalshot\FinalShotPanelBattle.as")
           $outputDirectory = [System.IO.Path]::GetFullPath("as3\bin")
-          $output = Join-Path $outputDirectory "FinalShotPanelBattle.swf"
           New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
-          $arguments = @(
-              "-source-path+=$sourcePath",
-              "-output=$output",
-              "-target-player=${{ env.FLASH_PLAYER_VERSION }}",
-              "-swf-version=${{ env.SWF_VERSION }}",
-              "-strict=true",
-              "-optimize=true",
-              "-warnings=true",
-              "-use-network=true"
+
+          $targets = @(
+              @{ Main = "as3\src_flash\src\com\inq\finalshot\FinalShotPanelBattle.as"; Output = "FinalShotPanelBattle.swf" },
+              @{ Main = "as3\src_flash\src\com\inq\finalshot\FinalShotBattleViewer.as"; Output = "FinalShotBattleViewer.swf" }
           )
-          Get-ChildItem "as3\libs" -Filter *.swc | ForEach-Object {
-              if ($_.Name -ne "playerglobal.swc") {
-                  $arguments += "-external-library-path+=$($_.FullName)"
+
+          foreach ($target in $targets) {
+              $main = [System.IO.Path]::GetFullPath($target.Main)
+              $output = Join-Path $outputDirectory $target.Output
+              $arguments = @(
+                  "-source-path+=$sourcePath",
+                  "-output=$output",
+                  "-target-player=${{ env.FLASH_PLAYER_VERSION }}",
+                  "-swf-version=${{ env.SWF_VERSION }}",
+                  "-strict=true",
+                  "-optimize=true",
+                  "-warnings=true",
+                  "-use-network=true"
+              )
+              Get-ChildItem "as3\libs" -Filter *.swc | ForEach-Object {
+                  if ($_.Name -ne "playerglobal.swc") {
+                      $arguments += "-external-library-path+=$($_.FullName)"
+                  }
               }
-          }
-          $arguments += $main
-          & $compiler @arguments
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $output)) {
-              throw "SWF compilation failed"
+              $arguments += $main
+              & $compiler @arguments
+              if ($LASTEXITCODE -ne 0 -or -not (Test-Path $output)) {
+                  throw "SWF compilation failed: $($target.Output)"
+              }
           }
 
       - name: Create build configuration
