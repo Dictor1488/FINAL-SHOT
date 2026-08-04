@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Interactive in-battle 3D inspection of the destroyed player vehicle.
-
-The viewer keeps the real vehicle model in the arena, switches to a temporary
-free orbit camera and projects the decoded Battle Hits impact points on top of
-that model.  It intentionally does not create a hangar scene.
-"""
+"""In-battle final-shot viewer for the destroyed player vehicle."""
 
 from __future__ import absolute_import
 
@@ -37,7 +32,6 @@ except ImportError:
     final_shot = None
     impacts = None
 
-
 LINKAGE = 'FinalShotBattleViewer'
 SWF_FILE = 'FinalShotBattleViewer.swf'
 logger = logging.getLogger('inq.final_shot.viewer')
@@ -53,6 +47,17 @@ def _cancel(callback_id):
 
 def _clamp(low, high, value):
     return max(low, min(high, value))
+
+
+def _subscribe(collection, handler):
+    """WoT 2.3.1 exposes input handlers as sets, older builds used lists."""
+    if handler in collection:
+        return
+    add = getattr(collection, 'add', None)
+    if add is not None:
+        add(handler)
+    else:
+        collection.append(handler)
 
 
 def _part_name(index):
@@ -87,18 +92,20 @@ class FinalShotBattleViewerView(View):
 
 
 def _register_view():
+    # Do not call removeSettings for a missing alias: the client logs an error
+    # even when the resulting exception is caught by the mod.
     try:
-        g_entitiesFactories.removeSettings(LINKAGE)
+        g_entitiesFactories.addSettings(ViewSettings(
+            LINKAGE,
+            FinalShotBattleViewerView,
+            SWF_FILE,
+            WindowLayer.WINDOW,
+            None,
+            ScopeTemplates.GLOBAL_SCOPE,
+        ))
     except Exception:
-        pass
-    g_entitiesFactories.addSettings(ViewSettings(
-        LINKAGE,
-        FinalShotBattleViewerView,
-        SWF_FILE,
-        WindowLayer.WINDOW,
-        None,
-        ScopeTemplates.GLOBAL_SCOPE,
-    ))
+        # A duplicate registration can occur after soft GUI reloads.
+        logger.debug('viewer settings already registered', exc_info=True)
 
 
 class BattleViewer(object):
@@ -124,19 +131,21 @@ class BattleViewer(object):
     def init(self):
         _register_view()
         FinalShotBattleViewerView.viewer = self
-        if self.handle_key not in g_keyEventHandlers:
-            g_keyEventHandlers.append(self.handle_key)
-        if self.handle_mouse not in g_mouseEventHandlers:
-            g_mouseEventHandlers.append(self.handle_mouse)
+        _subscribe(g_keyEventHandlers, self.handle_key)
+        _subscribe(g_mouseEventHandlers, self.handle_mouse)
         g_playerEvents.onAccountShowGUI += self._on_leave
-        if getattr(g_playerEvents, 'onAccountBecomeNonPlayer', None) is not None:
-            g_playerEvents.onAccountBecomeNonPlayer += self._on_leave
-        if getattr(g_playerEvents, 'onDisconnected', None) is not None:
-            g_playerEvents.onDisconnected += self._on_leave
+        event = getattr(g_playerEvents, 'onAccountBecomeNonPlayer', None)
+        if event is not None:
+            event += self._on_leave
+        event = getattr(g_playerEvents, 'onDisconnected', None)
+        if event is not None:
+            event += self._on_leave
         self._patch_controller()
+        logger.info('battle viewer initialized')
 
     def _patch_controller(self):
         if final_shot is None:
+            logger.error('main Final Shot controller is unavailable')
             return
         controller = getattr(final_shot, '_controller', None)
         if controller is None or self._controller_patched:
@@ -163,11 +172,13 @@ class BattleViewer(object):
         controller.leave_battle = leave
         controller._battle_viewer = self
         self._controller_patched = True
+        logger.info('battle viewer controller patch installed')
 
     def schedule_open(self, vehicle_id):
         _cancel(self.open_callback)
         self.vehicle_id = int(vehicle_id or 0)
         self.open_callback = BigWorld.callback(0.45, self.open)
+        logger.info('battle viewer scheduled for vehicle %s', self.vehicle_id)
 
     def open(self):
         self.open_callback = None
@@ -178,13 +189,14 @@ class BattleViewer(object):
             if vehicle is None:
                 vehicle = BigWorld.entities.get(self.vehicle_id)
             if vehicle is None:
-                logger.warning('player vehicle entity is no longer available')
+                logger.warning('destroyed player vehicle is unavailable')
                 return
             self.vehicle = vehicle
             self.center = self._vehicle_center(vehicle)
             self.previous_camera = BigWorld.camera()
             self.free_camera = FreeCamera()
-            self.free_camera.enable()
+            camera_matrix = Math.Matrix(self.previous_camera.invViewMatrix)
+            self.free_camera.enable(camera_matrix)
             self.active = True
             self._apply_camera()
             self._inject(0)
@@ -194,19 +206,17 @@ class BattleViewer(object):
                 duration = float(self.controller.config.get('displaySeconds', 0.0))
             if duration > 0.0:
                 self.auto_close_callback = BigWorld.callback(max(10.0, duration), self.close)
+            logger.info('battle viewer opened')
         except Exception:
             logger.exception('failed to open battle viewer')
             self.close()
 
     def close(self):
-        _cancel(self.open_callback)
-        _cancel(self.inject_callback)
-        _cancel(self.update_callback)
-        _cancel(self.auto_close_callback)
-        self.open_callback = None
-        self.inject_callback = None
-        self.update_callback = None
-        self.auto_close_callback = None
+        for callback_id in (self.open_callback, self.inject_callback,
+                            self.update_callback, self.auto_close_callback):
+            _cancel(callback_id)
+        self.open_callback = self.inject_callback = None
+        self.update_callback = self.auto_close_callback = None
         if self.view is not None:
             try:
                 self.view.flashObject.as_setVisible(False)
@@ -216,9 +226,6 @@ class BattleViewer(object):
         if self.active:
             try:
                 BigWorld.enableFreeCameraModeForShadowManager(False)
-            except Exception:
-                pass
-            try:
                 if self.previous_camera is not None:
                     BigWorld.camera(self.previous_camera)
             except Exception:
@@ -235,13 +242,9 @@ class BattleViewer(object):
 
     def _vehicle_center(self, vehicle):
         try:
-            matrix = Math.Matrix(vehicle.model.matrix)
-            return matrix.translation + Math.Vector3(0.0, 1.35, 0.0)
+            return Math.Matrix(vehicle.model.matrix).translation + Math.Vector3(0.0, 1.35, 0.0)
         except Exception:
-            try:
-                return Math.Vector3(vehicle.position) + Math.Vector3(0.0, 1.35, 0.0)
-            except Exception:
-                return Math.Vector3(0.0, 1.35, 0.0)
+            return Math.Vector3(vehicle.position) + Math.Vector3(0.0, 1.35, 0.0)
 
     def _apply_camera(self):
         if not self.active or self.free_camera is None:
@@ -258,11 +261,10 @@ class BattleViewer(object):
         if not self.active:
             return False
         try:
-            dx = float(getattr(event, 'dx', 0.0))
-            dy = float(getattr(event, 'dy', 0.0))
+            self.yaw -= float(getattr(event, 'dx', 0.0)) * 0.0045
+            self.pitch = _clamp(math.radians(-70.0), math.radians(45.0),
+                                self.pitch - float(getattr(event, 'dy', 0.0)) * 0.0038)
             dz = float(getattr(event, 'dz', 0.0))
-            self.yaw -= dx * 0.0045
-            self.pitch = _clamp(math.radians(-70.0), math.radians(45.0), self.pitch - dy * 0.0038)
             if dz:
                 self.distance = _clamp(3.0, 22.0, self.distance - dz * 0.01)
             self._apply_camera()
@@ -320,8 +322,7 @@ class BattleViewer(object):
         try:
             view.flashObject.as_setTitle(
                 u'FINAL SHOT · 3D',
-                u'Мышь — вращение · колесо — масштаб · Space — сброс · V/Esc — закрыть',
-            )
+                u'Мышь — вращение · колесо — масштаб · Space — сброс · V/Esc — закрыть')
             view.flashObject.as_setVisible(bool(self.active))
         except Exception:
             logger.exception('battle viewer flash initialization failed')
@@ -332,12 +333,10 @@ class BattleViewer(object):
         local = Math.Vector3(point.get('end') or (0.0, 0.0, 0.0))
         part_index = int(point.get('partIndex', -1))
         try:
-            appearance = self.vehicle.appearance
-            compound = appearance.compoundModel
+            compound = self.vehicle.appearance.compoundModel
             part_name = _part_name(part_index)
             if part_name:
-                matrix = Math.Matrix(compound.node(part_name))
-                return matrix.applyPoint(local)
+                return Math.Matrix(compound.node(part_name)).applyPoint(local)
         except Exception:
             pass
         try:
@@ -352,8 +351,6 @@ class BattleViewer(object):
         try:
             impacts._decorate_hits(self.controller)
             width, height = GUI.screenResolution()
-            width = float(width)
-            height = float(height)
             number = 0
             for hit in self.controller.hits:
                 for point in hit.get('impactPoints') or ():
@@ -367,8 +364,8 @@ class BattleViewer(object):
                         continue
                     number += 1
                     markers.append({
-                        'x': (projected.x + 1.0) * 0.5 * width,
-                        'y': (1.0 - projected.y) * 0.5 * height,
+                        'x': (projected.x + 1.0) * 0.5 * float(width),
+                        'y': (1.0 - projected.y) * 0.5 * float(height),
                         'label': unicode(number),
                         'fatal': bool(hit.get('fatal')),
                         'damage': int(hit.get('damage', 0) or 0),
