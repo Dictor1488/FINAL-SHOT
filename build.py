@@ -22,6 +22,7 @@ PYTHON_SOURCES: Tuple[Path, ...] = (
     ROOT / 'python/gui/mods/mod_zzzz_inq_final_shot_impact_view.py',
     ROOT / 'python/gui/mods/mod_zzzzz_inq_final_shot_battle_viewer.py',
     ROOT / 'python/gui/mods/mod_zzzzzzz_inq_final_shot_stable_markers.py',
+    ROOT / 'python/gui/mods/mod_zzzzzzzz_inq_final_shot_observer_visibility.py',
 )
 PYTHON_BYTECODE: Tuple[Path, ...] = tuple(path.with_suffix('.pyc') for path in PYTHON_SOURCES)
 
@@ -32,6 +33,7 @@ PACKAGE_FILES: Tuple[Tuple[Path, str], ...] = (
     (PYTHON_BYTECODE[3], 'res/scripts/client/gui/mods/mod_zzzz_inq_final_shot_impact_view.pyc'),
     (PYTHON_BYTECODE[4], 'res/scripts/client/gui/mods/mod_zzzzz_inq_final_shot_battle_viewer.pyc'),
     (PYTHON_BYTECODE[5], 'res/scripts/client/gui/mods/mod_zzzzzzz_inq_final_shot_stable_markers.pyc'),
+    (PYTHON_BYTECODE[6], 'res/scripts/client/gui/mods/mod_zzzzzzzz_inq_final_shot_observer_visibility.pyc'),
     (ROOT / 'as3/bin/FinalShotPanelBattle.swf', 'res/gui/flash/FinalShotPanelBattle.swf'),
     (ROOT / 'as3/bin/FinalShotBattleViewer.swf', 'res/gui/flash/FinalShotBattleViewer.swf'),
     (ROOT / 'resources/in/mods/inq.final_shot/en.json', 'res/mods/inq.final_shot/en.json'),
