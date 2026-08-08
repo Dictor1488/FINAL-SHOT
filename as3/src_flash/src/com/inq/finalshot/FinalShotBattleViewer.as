@@ -2,11 +2,9 @@ package com.inq.finalshot
 {
     import flash.display.DisplayObject;
     import flash.display.Loader;
-    import flash.display.Shape;
     import flash.display.Sprite;
     import flash.events.Event;
     import flash.events.IOErrorEvent;
-    import flash.events.MouseEvent;
     import flash.filters.DropShadowFilter;
     import flash.net.URLRequest;
     import flash.text.AntiAliasType;
@@ -19,11 +17,8 @@ package com.inq.finalshot
     public class FinalShotBattleViewer extends AbstractView
     {
         public var py_onReady:Function = null;
-        public var py_onClose:Function = null;
 
         private var _markers:Sprite;
-        private var _hint:TextField;
-        private var _close:Sprite;
         private var _markerViews:Array = [];
         private var _configured:Boolean = false;
         private var _frames:int = 0;
@@ -33,16 +28,18 @@ package com.inq.finalshot
         {
             super();
             mouseEnabled = false;
+            mouseChildren = false;
         }
 
         override protected function configUI():void
         {
             super.configUI();
-            _build();
+            _markers = new Sprite();
+            _markers.mouseEnabled = false;
+            _markers.mouseChildren = false;
+            addChild(_markers);
             _configured = true;
             visible = false;
-            if (App.instance && App.instance.stage)
-                App.instance.stage.addEventListener(Event.RESIZE, _onResize);
             addEventListener(Event.ENTER_FRAME, _readyFrame);
             if (_pendingMarkers != null)
             {
@@ -55,46 +52,10 @@ package com.inq.finalshot
         override protected function onDispose():void
         {
             removeEventListener(Event.ENTER_FRAME, _readyFrame);
-            if (App.instance && App.instance.stage)
-                App.instance.stage.removeEventListener(Event.RESIZE, _onResize);
-            if (_close)
-                _close.removeEventListener(MouseEvent.CLICK, _onClose);
             py_onReady = null;
-            py_onClose = null;
             _pendingMarkers = null;
             _markerViews = [];
             super.onDispose();
-        }
-
-        private function _build():void
-        {
-            _markers = new Sprite();
-            _markers.mouseEnabled = false;
-            _markers.mouseChildren = false;
-            addChild(_markers);
-
-            _close = new Sprite();
-            _close.buttonMode = true;
-            _close.useHandCursor = true;
-            _close.mouseEnabled = true;
-            _close.graphics.lineStyle(1, 0x73808C, 0.65);
-            _close.graphics.beginFill(0x0A1017, 0.78);
-            _close.graphics.drawRoundRect(0, 0, 30, 26, 6, 6);
-            _close.graphics.endFill();
-            var closeText:TextField = _text(17, 0xE8EDF1, true);
-            closeText.text = "x";
-            closeText.x = 10;
-            closeText.y = 1;
-            _close.addChild(closeText);
-            _close.addEventListener(MouseEvent.CLICK, _onClose);
-            addChild(_close);
-
-            _hint = _text(12, 0xD5DCE2, false);
-            _hint.text = "Mouse: rotate   Wheel: zoom   Space: reset   V / Esc: close";
-            _hint.filters = [new DropShadowFilter(2, 90, 0, 0.95, 4, 4, 1, 1)];
-            addChild(_hint);
-
-            _positionUI();
         }
 
         private function _text(size:int, color:uint, bold:Boolean):TextField
@@ -109,29 +70,6 @@ package com.inq.finalshot
             return field;
         }
 
-        private function _positionUI():void
-        {
-            if (!App.instance || !App.instance.stage)
-                return;
-            var sw:Number = App.instance.stage.stageWidth;
-            var sh:Number = App.instance.stage.stageHeight;
-            if (_hint)
-            {
-                _hint.x = int((sw - _hint.width) / 2);
-                _hint.y = sh - 48;
-            }
-            if (_close)
-            {
-                _close.x = sw - 48;
-                _close.y = 20;
-            }
-        }
-
-        private function _onResize(event:Event):void
-        {
-            _positionUI();
-        }
-
         private function _readyFrame(event:Event):void
         {
             _frames++;
@@ -140,12 +78,6 @@ package com.inq.finalshot
             removeEventListener(Event.ENTER_FRAME, _readyFrame);
             if (py_onReady != null)
                 py_onReady();
-        }
-
-        private function _onClose(event:MouseEvent):void
-        {
-            if (py_onClose != null)
-                py_onClose();
         }
 
         private function _drawProjectile(target:Sprite, color:uint, fatal:Boolean):void
@@ -311,8 +243,6 @@ package com.inq.finalshot
             }
         }
 
-        // Compatibility no-op for older Python builds that may call it during a
-        // soft GUI reload. The separate right-side hit list was intentionally removed.
         public function as_setRows(rows:Array):void
         {
         }
@@ -320,8 +250,6 @@ package com.inq.finalshot
         public function as_setVisible(value:Boolean):void
         {
             visible = value;
-            if (value)
-                _positionUI();
         }
     }
 }
