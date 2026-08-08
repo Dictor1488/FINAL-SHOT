@@ -18,11 +18,7 @@ logger = logging.getLogger('inq.final_shot.observer_visibility')
 
 
 def _observed_vehicle_id():
-    """Return the vehicle currently selected by WoT's observer/spectator logic.
-
-    AvatarObserver.getObservedVehicleID() is the client API used by WoT itself:
-    while spectating it returns the selected vehicle, otherwise playerVehicleID.
-    """
+    """Return the vehicle currently selected by WoT's observer/spectator logic."""
     try:
         player = BigWorld.player()
         if player is None:
@@ -43,14 +39,14 @@ def _observed_vehicle_id():
 
 def _set_view_visible(self, visible):
     visible = bool(visible)
-    previous = getattr(self, '_inq_observer_visible', None)
-    if previous == visible:
-        return
     self._inq_observer_visible = visible
     if self.view is None or not self.flash_ready:
         return
+    if getattr(self, '_inq_flash_visibility_applied', None) == visible:
+        return
     try:
         self.view.flashObject.as_setVisible(visible)
+        self._inq_flash_visibility_applied = visible
     except Exception:
         logger.exception('failed changing observer marker visibility')
 
@@ -66,8 +62,8 @@ def _frame_observer_only(self):
         observing_own = bool(own_id and observed_id == own_id)
 
         if not observing_own:
-            # When the user switches to an ally, hide the whole overlay once and
-            # do no wreck sampling, projection or Scaleform marker updates at all.
+            # Ally selected: hide once and completely skip wreck transforms,
+            # projectPoint() and marker Scaleform traffic while spectating them.
             _set_view_visible(self, False)
             self._inq_last_screen = None
         else:
@@ -88,14 +84,24 @@ def _frame_observer_only(self):
 
 
 def _open_observer_only(self):
-    result = self._inq_observer_original_open()
     self._inq_observer_visible = None
-    return result
+    self._inq_flash_visibility_applied = None
+    return self._inq_observer_original_open()
 
 
 def _close_observer_only(self):
     self._inq_observer_visible = None
+    self._inq_flash_visibility_applied = None
     return self._inq_observer_original_close()
+
+
+def _on_flash_ready_observer_only(self, view):
+    # Let the normal viewer finish initialization first. It may temporarily set
+    # itself visible based on `active`; invalidate our applied-state afterwards so
+    # the next frame enforces the actual observed vehicle immediately.
+    result = self._inq_observer_original_flash_ready(view)
+    self._inq_flash_visibility_applied = None
+    return result
 
 
 def _install():
@@ -113,11 +119,14 @@ def _install():
 
     cls._inq_observer_original_open = cls.open
     cls._inq_observer_original_close = cls.close
+    cls._inq_observer_original_flash_ready = cls.on_flash_ready
     cls.open = _open_observer_only
     cls.close = _close_observer_only
+    cls.on_flash_ready = _on_flash_ready_observer_only
     cls._frame = _frame_observer_only
     cls._inq_observer_visibility_patch = True
     instance._inq_observer_visible = None
+    instance._inq_flash_visibility_applied = None
     logger.info('observer visibility patch installed')
 
 
