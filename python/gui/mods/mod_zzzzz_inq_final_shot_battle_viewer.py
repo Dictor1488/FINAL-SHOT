@@ -3,7 +3,7 @@
 
 The mod never replaces or consumes the stock WoT postmortem/spectator camera.
 Impact anchors follow the wreck briefly while physics settles, then freeze in world
-space. After that only three cheap world-to-screen projections are refreshed.
+space. After that only cheap world-to-screen projections are refreshed.
 """
 
 from __future__ import absolute_import
@@ -336,19 +336,10 @@ class BattleViewer(object):
         width = float(width)
         height = float(height)
         for item in self._cached_markers:
-            world = item.get('world')
-            if world is None:
-                world = self._world_point(item.get('point'))
-            if world is None:
-                continue
-            projected = projectPoint(world)
-            if projected.w <= 0.0:
-                continue
-            if not (-1.08 <= projected.x <= 1.08 and -1.08 <= projected.y <= 1.08):
-                continue
-            markers.append({
-                'x': (projected.x + 1.0) * 0.5 * width,
-                'y': (1.0 - projected.y) * 0.5 * height,
+            data = {
+                'x': 0.0,
+                'y': 0.0,
+                'visible': False,
                 'fatal': item['fatal'],
                 'player': item['player'],
                 'vehicle': item['vehicle'],
@@ -356,7 +347,22 @@ class BattleViewer(object):
                 'icon': item['icon'],
                 'side': item['side'],
                 'offsetY': item['offsetY'],
-            })
+            }
+            world = item.get('world')
+            if world is None:
+                world = self._world_point(item.get('point'))
+            if world is not None:
+                try:
+                    projected = projectPoint(world)
+                    if (projected.w > 0.0 and
+                            -1.08 <= projected.x <= 1.08 and
+                            -1.08 <= projected.y <= 1.08):
+                        data['x'] = (projected.x + 1.0) * 0.5 * width
+                        data['y'] = (1.0 - projected.y) * 0.5 * height
+                        data['visible'] = True
+                except Exception:
+                    pass
+            markers.append(data)
         return markers
 
     def _schedule_frame(self, delay=PROJECT_INTERVAL):
