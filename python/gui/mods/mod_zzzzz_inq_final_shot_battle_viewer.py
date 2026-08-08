@@ -21,6 +21,11 @@ from gui.Scaleform.framework.managers.loaders import SFViewLoadParams
 from gui.shared.personality import ServicesLocator
 
 try:
+    from gui.shared.gui_items.Vehicle import getContourIconPath
+except ImportError:
+    getContourIconPath = None
+
+try:
     from vehicle_systems.tankStructure import TankPartIndexes
 except ImportError:
     TankPartIndexes = None
@@ -34,6 +39,8 @@ except ImportError:
 
 LINKAGE = 'FinalShotBattleViewer'
 SWF_FILE = 'FinalShotBattleViewer.swf'
+UPDATE_INTERVAL = 0.08
+OPEN_DELAY = 1.05
 logger = logging.getLogger('inq.final_shot.viewer')
 
 
@@ -50,7 +57,6 @@ def _clamp(low, high, value):
 
 
 def _subscribe(collection, handler):
-    """WoT 2.3.1 exposes input handlers as sets, older builds used lists."""
     if handler in collection:
         return
     add = getattr(collection, 'add', None)
@@ -92,19 +98,11 @@ class FinalShotBattleViewerView(View):
 
 
 def _register_view():
-    # Do not call removeSettings for a missing alias: the client logs an error
-    # even when the resulting exception is caught by the mod.
     try:
         g_entitiesFactories.addSettings(ViewSettings(
-            LINKAGE,
-            FinalShotBattleViewerView,
-            SWF_FILE,
-            WindowLayer.WINDOW,
-            None,
-            ScopeTemplates.GLOBAL_SCOPE,
-        ))
+            LINKAGE, FinalShotBattleViewerView, SWF_FILE, WindowLayer.WINDOW,
+            None, ScopeTemplates.GLOBAL_SCOPE))
     except Exception:
-        # A duplicate registration can occur after soft GUI reloads.
         logger.debug('viewer settings already registered', exc_info=True)
 
 
@@ -124,9 +122,10 @@ class BattleViewer(object):
         self.inject_callback = None
         self.update_callback = None
         self.open_callback = None
-        self.auto_close_callback = None
         self.controller = None
         self._controller_patched = False
+        self._cached_points = []
+        self._cached_rows = []
 
     def init(self):
         _register_view()
@@ -168,8 +167,23 @@ class BattleViewer(object):
             viewer.close()
             return original_leave()
 
+        # The old top summary panel is intentionally suppressed. The redesigned
+        # viewer contains the same information with attacker tank icons.
+        def show_without_old_panel():
+            try:
+                if impacts is not None:
+                    impacts._decorate_hits(controller)
+                controller.pending_show = False
+                _cancel(getattr(controller, 'hide_callback', None))
+                controller.hide_callback = None
+                if controller.view is not None:
+                    controller.view.flashObject.as_setVisible(False)
+            except Exception:
+                logger.exception('failed to suppress old summary panel')
+
         controller._on_vehicle_killed = killed
         controller.leave_battle = leave
+        controller._show = show_without_old_panel
         controller._battle_viewer = self
         self._controller_patched = True
         logger.info('battle viewer controller patch installed')
@@ -177,7 +191,9 @@ class BattleViewer(object):
     def schedule_open(self, vehicle_id):
         _cancel(self.open_callback)
         self.vehicle_id = int(vehicle_id or 0)
-        self.open_callback = BigWorld.callback(0.45, self.open)
+        # Let the stock death camera finish its initial transition first. This
+        # avoids two camera controllers fighting during the heaviest death frame.
+        self.open_callback = BigWorld.callback(OPEN_DELAY, self.open)
         logger.info('battle viewer scheduled for vehicle %s', self.vehicle_id)
 
     def open(self):
@@ -193,34 +209,28 @@ class BattleViewer(object):
                 return
             self.vehicle = vehicle
             self.center = self._vehicle_center(vehicle)
+            self._cache_hit_data()
             self.previous_camera = BigWorld.camera()
             self.free_camera = FreeCamera()
-            camera_matrix = Math.Matrix(self.previous_camera.invViewMatrix)
-            self.free_camera.enable(camera_matrix)
+            self.free_camera.enable(Math.Matrix(self.previous_camera.invViewMatrix))
             self.active = True
             self._apply_camera()
             self._inject(0)
-            self._update()
-            duration = 0.0
-            if self.controller is not None:
-                duration = float(self.controller.config.get('displaySeconds', 0.0))
-            if duration > 0.0:
-                self.auto_close_callback = BigWorld.callback(max(10.0, duration), self.close)
-            logger.info('battle viewer opened')
+            self._schedule_update(0.0)
+            logger.info('battle viewer opened with %s hits and %s points',
+                        len(self._cached_rows), len(self._cached_points))
         except Exception:
             logger.exception('failed to open battle viewer')
             self.close()
 
     def close(self):
-        for callback_id in (self.open_callback, self.inject_callback,
-                            self.update_callback, self.auto_close_callback):
+        for callback_id in (self.open_callback, self.inject_callback, self.update_callback):
             _cancel(callback_id)
-        self.open_callback = self.inject_callback = None
-        self.update_callback = self.auto_close_callback = None
+        self.open_callback = self.inject_callback = self.update_callback = None
         if self.view is not None:
             try:
                 self.view.flashObject.as_setVisible(False)
-                self.view.flashObject.as_setMarkers([])
+                self.view.flashObject.as_updateMarkers([])
             except Exception:
                 pass
         if self.active:
@@ -236,6 +246,8 @@ class BattleViewer(object):
         self.free_camera = None
         self.previous_camera = None
         self.flash_ready = False
+        self._cached_points = []
+        self._cached_rows = []
 
     def _on_leave(self, *args, **kwargs):
         self.close()
@@ -244,7 +256,10 @@ class BattleViewer(object):
         try:
             return Math.Matrix(vehicle.model.matrix).translation + Math.Vector3(0.0, 1.35, 0.0)
         except Exception:
-            return Math.Vector3(vehicle.position) + Math.Vector3(0.0, 1.35, 0.0)
+            try:
+                return Math.Vector3(vehicle.position) + Math.Vector3(0.0, 1.35, 0.0)
+            except Exception:
+                return self.center
 
     def _apply_camera(self):
         if not self.active or self.free_camera is None:
@@ -261,13 +276,17 @@ class BattleViewer(object):
         if not self.active:
             return False
         try:
-            self.yaw -= float(getattr(event, 'dx', 0.0)) * 0.0045
-            self.pitch = _clamp(math.radians(-70.0), math.radians(45.0),
-                                self.pitch - float(getattr(event, 'dy', 0.0)) * 0.0038)
+            dx = float(getattr(event, 'dx', 0.0))
+            dy = float(getattr(event, 'dy', 0.0))
             dz = float(getattr(event, 'dz', 0.0))
+            if dx or dy:
+                self.yaw -= dx * 0.0045
+                self.pitch = _clamp(math.radians(-70.0), math.radians(45.0),
+                                    self.pitch - dy * 0.0038)
             if dz:
                 self.distance = _clamp(3.0, 22.0, self.distance - dz * 0.01)
-            self._apply_camera()
+            if dx or dy or dz:
+                self._apply_camera()
             return True
         except Exception:
             logger.exception('viewer mouse input failed')
@@ -320,12 +339,51 @@ class BattleViewer(object):
             return
         self.flash_ready = True
         try:
-            view.flashObject.as_setTitle(
-                u'FINAL SHOT · 3D',
-                u'Мышь — вращение · колесо — масштаб · Space — сброс · V/Esc — закрыть')
+            view.flashObject.as_setRows(self._cached_rows)
             view.flashObject.as_setVisible(bool(self.active))
+            view.flashObject.as_updateMarkers(self._marker_data())
         except Exception:
             logger.exception('battle viewer flash initialization failed')
+
+    def _attacker_icon(self, attacker_id):
+        if getContourIconPath is None or not attacker_id:
+            return u''
+        try:
+            arena = getattr(BigWorld.player(), 'arena', None)
+            raw = arena.vehicles.get(int(attacker_id)) if arena is not None else None
+            descriptor = raw.get('vehicleType') if raw else None
+            item_type = getattr(descriptor, 'type', None)
+            name = getattr(item_type, 'name', None)
+            if name:
+                return unicode(getContourIconPath(name))
+        except Exception:
+            pass
+        return u''
+
+    def _cache_hit_data(self):
+        self._cached_points = []
+        self._cached_rows = []
+        if self.controller is None:
+            return
+        try:
+            if impacts is not None:
+                impacts._decorate_hits(self.controller)
+            index = 0
+            for hit in self.controller.hits:
+                index += 1
+                row = {
+                    'index': index,
+                    'vehicle': unicode(hit.get('vehicle') or u'?'),
+                    'player': unicode(hit.get('player') or u''),
+                    'damage': int(hit.get('damage', 0) or 0),
+                    'fatal': bool(hit.get('fatal')),
+                    'icon': self._attacker_icon(int(hit.get('attackerID', 0) or 0)),
+                }
+                self._cached_rows.append(row)
+                for point in hit.get('impactPoints') or ():
+                    self._cached_points.append((index, bool(hit.get('fatal')), point))
+        except Exception:
+            logger.exception('failed to cache hit data')
 
     def _world_point(self, point):
         if self.vehicle is None:
@@ -346,53 +404,48 @@ class BattleViewer(object):
 
     def _marker_data(self):
         markers = []
-        if self.controller is None or impacts is None:
+        if not self._cached_points:
             return markers
-        try:
-            impacts._decorate_hits(self.controller)
-            width, height = GUI.screenResolution()
-            number = 0
-            for hit in self.controller.hits:
-                for point in hit.get('impactPoints') or ():
-                    world = self._world_point(point)
-                    if world is None:
-                        continue
-                    projected = projectPoint(world)
-                    if projected.w <= 0.0:
-                        continue
-                    if not (-1.05 <= projected.x <= 1.05 and -1.05 <= projected.y <= 1.05):
-                        continue
-                    number += 1
-                    markers.append({
-                        'x': (projected.x + 1.0) * 0.5 * float(width),
-                        'y': (1.0 - projected.y) * 0.5 * float(height),
-                        'label': unicode(number),
-                        'fatal': bool(hit.get('fatal')),
-                        'damage': int(hit.get('damage', 0) or 0),
-                        'part': unicode(point.get('part') or hit.get('impactPart') or ''),
-                    })
-            return markers
-        except Exception:
-            logger.exception('failed to project impact markers')
-            return []
+        width, height = GUI.screenResolution()
+        width = float(width)
+        height = float(height)
+        for index, fatal, point in self._cached_points:
+            world = self._world_point(point)
+            if world is None:
+                continue
+            projected = projectPoint(world)
+            if projected.w <= 0.0:
+                continue
+            if not (-1.08 <= projected.x <= 1.08 and -1.08 <= projected.y <= 1.08):
+                continue
+            markers.append({
+                'x': (projected.x + 1.0) * 0.5 * width,
+                'y': (1.0 - projected.y) * 0.5 * height,
+                'label': unicode(index),
+                'fatal': fatal,
+            })
+        return markers
+
+    def _schedule_update(self, delay=UPDATE_INTERVAL):
+        _cancel(self.update_callback)
+        self.update_callback = BigWorld.callback(delay, self._update)
 
     def _update(self):
         self.update_callback = None
         if not self.active:
             return
         try:
-            if self.vehicle is None or BigWorld.entity(self.vehicle_id) is None:
-                self.close()
-                return
-            self.center = self._vehicle_center(self.vehicle)
-            self._apply_camera()
+            # Do not drive the camera every tick. Camera matrices are changed
+            # only on user input, which removes the expensive death-time fight
+            # with the stock postmortem camera.
+            if self.vehicle is not None:
+                self.center = self._vehicle_center(self.vehicle)
             if self.view is not None and self.flash_ready:
-                self.view.flashObject.as_setVisible(True)
-                self.view.flashObject.as_setMarkers(self._marker_data())
+                self.view.flashObject.as_updateMarkers(self._marker_data())
         except Exception:
             logger.exception('battle viewer update failed')
         if self.active:
-            self.update_callback = BigWorld.callback(0.033, self._update)
+            self._schedule_update()
 
 
 _viewer = BattleViewer()
