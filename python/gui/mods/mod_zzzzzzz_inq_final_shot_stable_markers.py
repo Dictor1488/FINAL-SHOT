@@ -21,12 +21,10 @@ except ImportError:
 
 logger = logging.getLogger('inq.final_shot.stable_markers')
 
-# UI projection is intentionally much slower than the game camera. This keeps the
-# stock spectator camera smooth while the Flash markers simply follow it.
-PROJECT_INTERVAL = 0.10       # 10 Hz
-WRECK_SAMPLE_INTERVAL = 0.25  # 4 Hz while the wreck is settling
+PROJECT_INTERVAL = 0.10       # 10 Hz screen projection
+WRECK_SAMPLE_INTERVAL = 0.25  # 4 Hz wreck tracking while it settles
 STABLE_SECONDS = 1.50
-MOVE_EPSILON = 0.012          # ~1.2 cm root movement
+MOVE_EPSILON = 0.012
 ROTATE_EPSILON = 0.0025
 PIXEL_EPSILON = 1.5
 
@@ -67,6 +65,31 @@ def _root_moved(previous, current):
     return _distance_sq(old_forward, new_forward) > ROTATE_EPSILON * ROTATE_EPSILON
 
 
+def _remove_legacy_input_handlers(instance):
+    """Remove bound handlers registered by the old FreeCamera viewer at init time.
+
+    Replacing BattleViewer.handle_mouse later is not enough: the event collection
+    already contains the old bound-method object. Remove those objects explicitly
+    so every mouse/key event bypasses Final Shot completely.
+    """
+    for collection, method_name in (
+            (viewer_mod.g_mouseEventHandlers, 'handle_mouse'),
+            (viewer_mod.g_keyEventHandlers, 'handle_key')):
+        try:
+            for handler in list(collection):
+                owner = getattr(handler, 'im_self', getattr(handler, '__self__', None))
+                func = getattr(handler, 'im_func', getattr(handler, '__func__', None))
+                name = getattr(func, '__name__', getattr(handler, '__name__', ''))
+                if owner is instance and name == method_name:
+                    discard = getattr(collection, 'discard', None)
+                    if discard is not None:
+                        discard(handler)
+                    else:
+                        collection.remove(handler)
+        except Exception:
+            logger.exception('failed removing legacy %s handler', method_name)
+
+
 def _cache_hits(self):
     self._cached_markers = []
     if self.controller is None:
@@ -80,7 +103,6 @@ def _cache_hits(self):
             if not points:
                 continue
             point = points[0]
-            # Validate once. Keep the local point until the wreck stops moving.
             if self._world_point(point) is None:
                 continue
             hit_index += 1
@@ -142,7 +164,6 @@ def _sample_wreck(self, now):
 
     if not getattr(self, '_inq_world_frozen', False):
         stable_since = float(getattr(self, '_inq_stable_since', now) or now)
-        # Still refresh at only 4 Hz during settling, not every camera frame.
         _refresh_world_points(self, False)
         if now - stable_since >= STABLE_SECONDS:
             _refresh_world_points(self, True)
@@ -154,8 +175,6 @@ def _marker_data(self):
     width = float(width)
     height = float(height)
 
-    # Keep a stable array length so AS3 never destroys/recreates cards while the
-    # camera moves. Off-screen markers are only toggled invisible.
     for item in self._cached_markers:
         world = item.get('world')
         visible = False
@@ -238,7 +257,6 @@ def _frame(self):
     try:
         now = float(BigWorld.time())
         _sample_wreck(self, now)
-
         if self.view is not None and self.flash_ready:
             data = self._marker_data()
             previous = getattr(self, '_inq_last_screen', None)
@@ -252,7 +270,6 @@ def _frame(self):
 
 
 def _close(self):
-    # Never restore or replace the game's spectator camera.
     self.free_camera = None
     self.previous_camera = None
     result = self._inq_original_close()
@@ -274,15 +291,17 @@ def _install():
     if getattr(cls, '_inq_stable_marker_patch', False):
         return
 
+    # Critical: remove the callbacks registered by BattleViewer.init() before we
+    # replace the methods. Otherwise the old FreeCamera handlers keep receiving
+    # every mouse/key event through their already-created bound method objects.
+    _remove_legacy_input_handlers(instance)
+
     cls._inq_original_close = cls.close
     cls._cache_hit_data = _cache_hits
     cls._marker_data = _marker_data
     cls.open = _open
     cls._frame = _frame
     cls.close = _close
-
-    # Observe nothing and consume nothing: camera, mouse, keyboard and switching
-    # between allied vehicles remain 100% stock WoT behavior.
     cls.handle_mouse = lambda self, event: False
     cls.handle_key = lambda self, event: False
     cls._apply_camera = lambda self: None
@@ -291,7 +310,7 @@ def _install():
     instance._inq_last_root_state = None
     instance._inq_last_screen = None
     instance._inq_world_frozen = False
-    logger.info('stable low-lag marker patch installed')
+    logger.info('stable low-lag marker patch installed; legacy input handlers removed')
 
 
 _install()
