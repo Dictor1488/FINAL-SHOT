@@ -1,17 +1,19 @@
 package com.inq.finalshot
 {
     import flash.display.DisplayObject;
+    import flash.display.Loader;
     import flash.display.Shape;
     import flash.display.Sprite;
     import flash.events.Event;
+    import flash.events.IOErrorEvent;
     import flash.events.MouseEvent;
     import flash.filters.DropShadowFilter;
+    import flash.net.URLRequest;
     import flash.text.AntiAliasType;
     import flash.text.TextField;
     import flash.text.TextFieldAutoSize;
     import flash.text.TextFormat;
 
-    import net.wg.gui.components.controls.UILoader;
     import net.wg.infrastructure.base.AbstractView;
 
     public class FinalShotBattleViewer extends AbstractView
@@ -173,6 +175,41 @@ package com.inq.finalshot
                 _rowsContainer.removeChildAt(0);
         }
 
+        private function _addTankIcon(row:Sprite, icon:String):void
+        {
+            var holder:Sprite = new Sprite();
+            holder.x = 32;
+            holder.y = 11;
+            holder.mouseEnabled = false;
+            holder.mouseChildren = false;
+            row.addChild(holder);
+
+            if (icon == null || icon.length == 0)
+                return;
+
+            var loader:Loader = new Loader();
+            loader.contentLoaderInfo.addEventListener(Event.COMPLETE, function(event:Event):void
+            {
+                var content:DisplayObject = loader.content;
+                if (content == null || content.width <= 0 || content.height <= 0)
+                    return;
+                var scale:Number = Math.min(86 / content.width, 50 / content.height);
+                content.scaleX = scale;
+                content.scaleY = scale;
+                content.x = (86 - content.width) / 2;
+                content.y = (50 - content.height) / 2;
+            });
+            loader.contentLoaderInfo.addEventListener(IOErrorEvent.IO_ERROR, function(event:IOErrorEvent):void {});
+            holder.addChild(loader);
+            try
+            {
+                loader.load(new URLRequest(icon));
+            }
+            catch (error:Error)
+            {
+            }
+        }
+
         private function _makeRow(data:Object, yPos:Number):Sprite
         {
             var row:Sprite = new Sprite();
@@ -198,17 +235,7 @@ package com.inq.finalshot
             idx.y = 24;
             row.addChild(idx);
 
-            var loader:UILoader = new UILoader();
-            loader.x = 32;
-            loader.y = 11;
-            loader.width = 86;
-            loader.height = 50;
-            loader.maintainAspectRatio = true;
-            loader.autoSize = false;
-            var icon:String = String(data.icon != null ? data.icon : "");
-            if (icon.length > 0)
-                loader.source = icon;
-            row.addChild(loader);
+            _addTankIcon(row, String(data.icon != null ? data.icon : ""));
 
             var vehicle:TextField = _text(15, 0xF2F5F7, true);
             vehicle.text = String(data.vehicle != null ? data.vehicle : "?");
