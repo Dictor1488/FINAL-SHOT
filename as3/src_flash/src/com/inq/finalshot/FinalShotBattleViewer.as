@@ -239,7 +239,7 @@ package com.inq.finalshot
                 var marker:Sprite = _markerViews[i] as Sprite;
                 marker.x = Number(data.x);
                 marker.y = Number(data.y);
-                marker.visible = true;
+                marker.visible = data.visible !== false;
             }
         }
 
