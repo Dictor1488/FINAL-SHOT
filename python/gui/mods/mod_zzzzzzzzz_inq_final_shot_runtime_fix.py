@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Runtime recovery for Final Shot postmortem visibility, impact selection and fatal hit."""
+"""Runtime fixes for Final Shot postmortem visibility, impacts and fatal hit."""
 
 from __future__ import absolute_import
 
@@ -15,9 +15,6 @@ try:
 except ImportError:
     viewer_mod = None
 
-# The current passive viewer does not register custom input handlers anymore.
-# Older stable-marker code probes these names during import, so expose harmless
-# empty collections before importing it.
 if viewer_mod is not None:
     if not hasattr(viewer_mod, 'g_mouseEventHandlers'):
         viewer_mod.g_mouseEventHandlers = set()
@@ -46,35 +43,50 @@ except ImportError:
     impacts_mod = None
 
 
-def _current_camera_vehicle_id():
-    """Return the vehicle actually selected by the stock postmortem camera.
+def _disable_legacy_panel():
+    """Never load the obsolete FinalShotPanelBattle summary SWF."""
+    if final_shot is None:
+        return
+    controller = getattr(final_shot, '_controller', None)
+    if controller is None:
+        return
 
-    AvatarObserver.getObservedVehicleID() falls back to playerVehicleID whenever
-    isObserver() is false. During normal postmortem switching that can therefore
-    report the dead player's tank while player.vehicle already points at an ally.
-    Prefer the live attached vehicle first, then observer internals, then fallback.
-    """
+    def no_legacy_inject(self, attempt=0):
+        self.inject_callback = None
+        if self.view is not None:
+            try:
+                self.view.flashObject.as_setVisible(False)
+            except Exception:
+                pass
+        return
+
+    controller._inject = types.MethodType(no_legacy_inject, controller, controller.__class__)
+    if getattr(controller, 'view', None) is not None:
+        try:
+            controller.view.flashObject.as_setVisible(False)
+        except Exception:
+            pass
+    logger.warning('legacy FinalShotPanelBattle injection disabled')
+
+
+def _current_camera_vehicle_id():
     try:
         player = BigWorld.player()
         if player is None:
             return 0
-
         attached = getattr(player, 'vehicle', None)
         if attached is not None:
             attached_id = int(getattr(attached, 'id', 0) or 0)
             if attached_id:
                 return attached_id
-
         observed = getattr(player, 'observedVehicleID', None)
         if observed:
             return int(observed)
-
         getter = getattr(player, 'getObservedVehicleID', None)
         if getter is not None:
             value = int(getter() or 0)
             if value:
                 return value
-
         return int(getattr(player, 'playerVehicleID', 0) or 0)
     except Exception:
         return 0
@@ -92,7 +104,6 @@ def _mark_lethal_hit(controller, attacker_id, damage):
     damage = int(damage or 0)
     for item in controller.hits:
         item['fatal'] = False
-
     chosen = None
     for item in reversed(controller.hits):
         if attacker_id and int(item.get('attackerID', 0) or 0) != attacker_id:
@@ -102,7 +113,6 @@ def _mark_lethal_hit(controller, attacker_id, damage):
             break
         if chosen is None:
             chosen = item
-
     if chosen is None and attacker_id:
         try:
             vehicle, player_name = controller._vehicle_identity(attacker_id)
@@ -121,7 +131,6 @@ def _mark_lethal_hit(controller, attacker_id, damage):
             controller.hits.append(chosen)
         except Exception:
             chosen = None
-
     if chosen is not None:
         chosen['fatal'] = True
         controller._inq_authoritative_killer_id = attacker_id
@@ -133,7 +142,6 @@ def _install_fatal_authority():
     controller = getattr(final_shot, '_controller', None)
     if controller is None or getattr(controller, '_inq_fatal_authority_installed', False):
         return
-
     original_health = controller._on_vehicle_feedback
     original_killed = controller._on_vehicle_killed
 
@@ -152,11 +160,8 @@ def _install_fatal_authority():
                 lethal = new_health == 0 and damage > 0
         except Exception:
             pass
-
         result = original_health(event_id, vehicle_id, value)
         if lethal:
-            # VEHICLE_HEALTH is only a provisional fallback. The arena kill event
-            # below overrides it whenever WoT provides a non-zero killer ID.
             _mark_lethal_hit(self, attacker_id, damage)
         return result
 
@@ -164,11 +169,6 @@ def _install_fatal_authority():
         target_id = int(target_id or 0)
         attacker_id = int(attacker_id or 0)
         is_player = target_id == int(self.player_vehicle_id or 0)
-
-        # WoT's arena.onVehicleKilled is the final authority for who destroyed
-        # the player's vehicle. VEHICLE_HEALTH can be batched/stale and in real
-        # battles may point at the previous damaging attacker, which caused the
-        # wrong marker to be painted red.
         if is_player and attacker_id:
             _mark_lethal_hit(self, attacker_id, 0)
             saved = [bool(item.get('fatal')) for item in self.hits]
@@ -178,9 +178,6 @@ def _install_fatal_authority():
             self._inq_authoritative_killer_id = attacker_id
             logger.warning('arena kill event confirmed killer vehicle id=%s', attacker_id)
             return result
-
-        # Only when the kill event has no attacker do we retain the provisional
-        # VEHICLE_HEALTH result.
         authoritative = int(getattr(self, '_inq_authoritative_killer_id', 0) or 0)
         if is_player and authoritative:
             saved = [bool(item.get('fatal')) for item in self.hits]
@@ -223,7 +220,7 @@ def _find_hit_for_impact(controller, impact, used):
 
 
 def _cache_last_real_impacts(self):
-    """Build markers from the last real showDamageFromShot impacts, not row matches."""
+    """Build markers from real impacts; impact attackerID owns identity."""
     self._cached_markers = []
     controller = getattr(self, 'controller', None)
     if controller is None or impacts_mod is None:
@@ -233,7 +230,7 @@ def _cache_last_real_impacts(self):
         impacts = list(getattr(impacts_mod, '_IMPACTS', ()))[-limit:]
         used_hits = set()
         lethal_attacker = int(getattr(controller, '_inq_authoritative_killer_id', 0) or 0)
-        lethal_assigned = False
+        built = []
 
         for hit_index, impact in enumerate(impacts, 1):
             points = impact.get('points') or ()
@@ -245,33 +242,29 @@ def _cache_last_real_impacts(self):
 
             attacker_id = int(impact.get('attackerID', 0) or 0)
             matched = _find_hit_for_impact(controller, impact, used_hits)
+            damage = int(impact.get('damage', 0) or 0)
+            if matched is not None:
+                matched_damage = int(matched.get('damage', 0) or 0)
+                if matched_damage:
+                    damage = matched_damage
+
+            # Identity is authoritative from this exact showDamageFromShot impact.
             vehicle_name = u''
             player_name = u''
-            damage = int(impact.get('damage', 0) or 0)
-            fatal = False
-            if matched is not None:
-                vehicle_name = unicode(matched.get('vehicle') or u'')
-                player_name = unicode(matched.get('player') or u'')
-                damage = int(matched.get('damage', damage) or damage)
-                fatal = bool(matched.get('fatal'))
-
-            if not vehicle_name or not player_name:
+            if attacker_id:
                 try:
                     vehicle_name, player_name = controller._vehicle_identity(attacker_id)
                 except Exception:
                     pass
+            elif matched is not None:
+                vehicle_name = unicode(matched.get('vehicle') or u'')
+                player_name = unicode(matched.get('player') or u'')
 
-            # The newest real impact from the authoritative lethal attacker wins.
-            if lethal_attacker and attacker_id == lethal_attacker:
-                fatal = True
-                lethal_assigned = True
-            elif lethal_attacker:
-                fatal = False
-
-            self._cached_markers.append({
+            built.append({
+                'attackerID': attacker_id,
                 'point': point,
                 'world': None,
-                'fatal': fatal,
+                'fatal': False,
                 'player': player_name,
                 'vehicle': vehicle_name,
                 'damage': damage,
@@ -280,17 +273,17 @@ def _cache_last_real_impacts(self):
                 'offsetY': (-30, 18, -8)[(hit_index - 1) % 3],
             })
 
-        # If the killer fired more than once in the last three impacts, only the
-        # newest one should be red.
-        if lethal_attacker and lethal_assigned:
+        if lethal_attacker:
             found = False
-            for marker in reversed(self._cached_markers):
-                if marker.get('fatal') and not found:
+            for marker in reversed(built):
+                if int(marker.get('attackerID', 0) or 0) == lethal_attacker and not found:
+                    marker['fatal'] = True
                     found = True
-                elif marker.get('fatal'):
+                else:
                     marker['fatal'] = False
 
-        logger.warning('cached %s real impact markers', len(self._cached_markers))
+        self._cached_markers = built
+        logger.warning('cached %s real impact markers with authoritative attacker identity', len(built))
     except Exception:
         logger.exception('failed caching real impact markers')
 
@@ -303,9 +296,10 @@ def _install_impact_cache_fix():
     if cls is None or instance is None:
         return
     cls._cache_hit_data = _cache_last_real_impacts
-    logger.warning('runtime impact cache fix installed: last real impacts are authoritative')
+    logger.warning('runtime impact identity fix installed')
 
 
+_disable_legacy_panel()
 _install_observer_fix()
 _install_fatal_authority()
 _install_impact_cache_fix()
