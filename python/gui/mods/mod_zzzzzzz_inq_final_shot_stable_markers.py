@@ -66,15 +66,12 @@ def _root_moved(previous, current):
 
 
 def _remove_legacy_input_handlers(instance):
-    """Remove bound handlers registered by the old FreeCamera viewer at init time.
-
-    Replacing BattleViewer.handle_mouse later is not enough: the event collection
-    already contains the old bound-method object. Remove those objects explicitly
-    so every mouse/key event bypasses Final Shot completely.
-    """
+    """Remove any input handlers left by an older viewer implementation."""
+    mouse_handlers = getattr(viewer_mod, 'g_mouseEventHandlers', ())
+    key_handlers = getattr(viewer_mod, 'g_keyEventHandlers', ())
     for collection, method_name in (
-            (viewer_mod.g_mouseEventHandlers, 'handle_mouse'),
-            (viewer_mod.g_keyEventHandlers, 'handle_key')):
+            (mouse_handlers, 'handle_mouse'),
+            (key_handlers, 'handle_key')):
         try:
             for handler in list(collection):
                 owner = getattr(handler, 'im_self', getattr(handler, '__self__', None))
@@ -291,9 +288,6 @@ def _install():
     if getattr(cls, '_inq_stable_marker_patch', False):
         return
 
-    # Critical: remove the callbacks registered by BattleViewer.init() before we
-    # replace the methods. Otherwise the old FreeCamera handlers keep receiving
-    # every mouse/key event through their already-created bound method objects.
     _remove_legacy_input_handlers(instance)
 
     cls._inq_original_close = cls.close
@@ -310,7 +304,7 @@ def _install():
     instance._inq_last_root_state = None
     instance._inq_last_screen = None
     instance._inq_world_frozen = False
-    logger.info('stable low-lag marker patch installed; legacy input handlers removed')
+    logger.info('stable low-lag marker patch installed')
 
 
 _install()
