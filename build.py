@@ -15,20 +15,24 @@ from typing import Dict, Iterable, Tuple
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / 'build.json'
 BUILD_DIR = ROOT / 'build'
+MODS_ROOT = ROOT / 'python/gui/mods'
 
-# Runtime modules in the same explicit order used by WoT ScriptLoader.
+# ScriptLoader entry + internal package. Only mod_inq_final_shot.py is a top-level
+# mod_ module; package files are imported explicitly by that entry point.
 PYTHON_SOURCES: Tuple[Path, ...] = (
-    ROOT / 'python/gui/mods/mod_inq_final_shot.py',
-    ROOT / 'python/gui/mods/mod_inq_final_shot_10_health.py',
-    ROOT / 'python/gui/mods/mod_inq_final_shot_20_impacts.py',
-    ROOT / 'python/gui/mods/mod_inq_final_shot_30_battle_viewer.py',
-    ROOT / 'python/gui/mods/mod_inq_final_shot_40_stable_markers.py',
-    ROOT / 'python/gui/mods/mod_inq_final_shot_50_observer_visibility.py',
-    ROOT / 'python/gui/mods/mod_inq_final_shot_60_runtime.py',
+    MODS_ROOT / 'mod_inq_final_shot.py',
+    MODS_ROOT / 'inq_final_shot/__init__.py',
+    MODS_ROOT / 'inq_final_shot/core.py',
+    MODS_ROOT / 'inq_final_shot/health.py',
+    MODS_ROOT / 'inq_final_shot/impacts.py',
+    MODS_ROOT / 'inq_final_shot/battle_viewer.py',
+    MODS_ROOT / 'inq_final_shot/stable_markers.py',
+    MODS_ROOT / 'inq_final_shot/observer_visibility.py',
+    MODS_ROOT / 'inq_final_shot/runtime.py',
 )
 PYTHON_BYTECODE: Tuple[Path, ...] = tuple(path.with_suffix('.pyc') for path in PYTHON_SOURCES)
 PYTHON_PACKAGE_FILES: Tuple[Tuple[Path, str], ...] = tuple(
-    (bytecode, 'res/scripts/client/gui/mods/%s' % bytecode.name)
+    (bytecode, 'res/scripts/client/gui/mods/%s' % bytecode.relative_to(MODS_ROOT).as_posix())
     for bytecode in PYTHON_BYTECODE
 )
 
@@ -126,6 +130,9 @@ def build_package(config: Dict[str, object]) -> Path:
             extra = sorted(actual - expected)
             missing = sorted(expected - actual)
             raise RuntimeError(f'Invalid package contents; extra={extra}, missing={missing}')
+        top_level_mods = [name for name in actual if name.startswith('res/scripts/client/gui/mods/mod_') and name.endswith('.pyc')]
+        if top_level_mods != ['res/scripts/client/gui/mods/mod_inq_final_shot.pyc']:
+            raise RuntimeError('Expected exactly one ScriptLoader entry point: %r' % top_level_mods)
         bad = archive.testzip()
         if bad is not None:
             raise RuntimeError(f'Corrupt package entry: {bad}')
