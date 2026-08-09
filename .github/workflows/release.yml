@@ -24,7 +24,7 @@ env:
   SWF_VERSION: "39"
   MOD_ID: "com.inq.final_shot"
   MOD_NAME: "INQ Final Shot"
-  MOD_DESCRIPTION: "In-battle 3D viewer for the final received hits"
+  MOD_DESCRIPTION: "In-battle final-hit viewer for the player's destroyed vehicle"
 
 jobs:
   build-and-release:
@@ -33,19 +33,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      # The WoT Scaleform SWC libraries are kept in MARKS and copied into the
-      # project. The Flex compiler itself is restored from the default-branch
-      # cache, so PR builds no longer download the SDK after the main cache is seeded.
-      - name: Checkout WoT SWC libraries
-        uses: actions/checkout@v4
-        with:
-          repository: Dictor1488/MARKS
-          ref: main
-          path: reference-marks
-          sparse-checkout: |
-            as3/libs
-          sparse-checkout-cone-mode: false
 
       - name: Determine release version
         shell: pwsh
@@ -131,8 +118,9 @@ jobs:
       - name: Prepare local WoT SWC libraries
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path as3\libs -Force | Out-Null
-          Copy-Item reference-marks\as3\libs\*.swc as3\libs\ -Force
+          if (-not (Test-Path "as3\libs\playerglobal.swc")) {
+              throw "Local WoT SWC libraries are missing"
+          }
           $playerDirectory = "C:\flex-sdk\frameworks\libs\player\${{ env.FLASH_PLAYER_VERSION }}"
           New-Item -ItemType Directory -Path $playerDirectory -Force | Out-Null
           Copy-Item as3\libs\playerglobal.swc "$playerDirectory\playerglobal.swc" -Force
@@ -143,42 +131,35 @@ jobs:
           Set-Content -Path $flexConfig -Value $content -Encoding utf8
           Get-ChildItem as3\libs\*.swc | Select-Object Name, Length
 
-      - name: Build Final Shot SWFs
+      - name: Build Final Shot SWF
         shell: pwsh
         run: |
           $compiler = "C:\flex-sdk\bin\mxmlc.bat"
           $sourcePath = [System.IO.Path]::GetFullPath("as3\src_flash\src")
           $outputDirectory = [System.IO.Path]::GetFullPath("as3\bin")
+          $main = [System.IO.Path]::GetFullPath("as3\src_flash\src\com\inq\finalshot\FinalShotBattleViewer.as")
+          $output = Join-Path $outputDirectory "FinalShotBattleViewer.swf"
           New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 
-          $targets = @(
-              @{ Main = "as3\src_flash\src\com\inq\finalshot\FinalShotPanelBattle.as"; Output = "FinalShotPanelBattle.swf" },
-              @{ Main = "as3\src_flash\src\com\inq\finalshot\FinalShotBattleViewer.as"; Output = "FinalShotBattleViewer.swf" }
+          $arguments = @(
+              "-source-path+=$sourcePath",
+              "-output=$output",
+              "-target-player=${{ env.FLASH_PLAYER_VERSION }}",
+              "-swf-version=${{ env.SWF_VERSION }}",
+              "-strict=true",
+              "-optimize=true",
+              "-warnings=true",
+              "-use-network=true"
           )
-
-          foreach ($target in $targets) {
-              $main = [System.IO.Path]::GetFullPath($target.Main)
-              $output = Join-Path $outputDirectory $target.Output
-              $arguments = @(
-                  "-source-path+=$sourcePath",
-                  "-output=$output",
-                  "-target-player=${{ env.FLASH_PLAYER_VERSION }}",
-                  "-swf-version=${{ env.SWF_VERSION }}",
-                  "-strict=true",
-                  "-optimize=true",
-                  "-warnings=true",
-                  "-use-network=true"
-              )
-              Get-ChildItem "as3\libs" -Filter *.swc | ForEach-Object {
-                  if ($_.Name -ne "playerglobal.swc") {
-                      $arguments += "-external-library-path+=$($_.FullName)"
-                  }
+          Get-ChildItem "as3\libs" -Filter *.swc | ForEach-Object {
+              if ($_.Name -ne "playerglobal.swc") {
+                  $arguments += "-external-library-path+=$($_.FullName)"
               }
-              $arguments += $main
-              & $compiler @arguments
-              if ($LASTEXITCODE -ne 0 -or -not (Test-Path $output)) {
-                  throw "SWF compilation failed: $($target.Output)"
-              }
+          }
+          $arguments += $main
+          & $compiler @arguments
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $output)) {
+              throw "SWF compilation failed"
           }
 
       - name: Create build configuration
@@ -202,22 +183,21 @@ jobs:
           $package = "build\${{ env.MOD_ID }}_${{ env.PROJECT_VERSION }}.wotmod"
           if (-not (Test-Path $package)) { throw "Package was not created" }
 
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: com.inq.final_shot-${{ env.PROJECT_VERSION }}
-          path: build/com.inq.final_shot_${{ env.PROJECT_VERSION }}.wotmod
-          if-no-files-found: error
-          compression-level: 0
+      - name: Verify release package contents
+        shell: pwsh
+        run: |
+          python -c "import zipfile; p=r'build/${{ env.MOD_ID }}_${{ env.PROJECT_VERSION }}.wotmod'; z=zipfile.ZipFile(p); names=set(z.namelist()); assert 'res/gui/flash/FinalShotBattleViewer.swf' in names; assert 'res/gui/flash/FinalShotPanelBattle.swf' not in names; assert z.testzip() is None; print('Verified', len(names), 'package entries')"
 
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.RELEASE_TAG }}
           commit: ${{ github.sha }}
           name: INQ Final Shot v${{ env.PROJECT_VERSION }}
           artifacts: build/com.inq.final_shot_${{ env.PROJECT_VERSION }}.wotmod
+          artifactErrorsFailBuild: true
           allowUpdates: true
           removeArtifacts: true
           replacesArtifacts: true
+          generateReleaseNotes: true
