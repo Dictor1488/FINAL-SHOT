@@ -155,12 +155,34 @@ def _install_fatal_authority():
 
         result = original_health(event_id, vehicle_id, value)
         if lethal:
+            # VEHICLE_HEALTH is only a provisional fallback. The arena kill event
+            # below overrides it whenever WoT provides a non-zero killer ID.
             _mark_lethal_hit(self, attacker_id, damage)
         return result
 
     def killed_authoritative(self, target_id, attacker_id=0, *args, **kwargs):
+        target_id = int(target_id or 0)
+        attacker_id = int(attacker_id or 0)
+        is_player = target_id == int(self.player_vehicle_id or 0)
+
+        # WoT's arena.onVehicleKilled is the final authority for who destroyed
+        # the player's vehicle. VEHICLE_HEALTH can be batched/stale and in real
+        # battles may point at the previous damaging attacker, which caused the
+        # wrong marker to be painted red.
+        if is_player and attacker_id:
+            _mark_lethal_hit(self, attacker_id, 0)
+            saved = [bool(item.get('fatal')) for item in self.hits]
+            result = original_killed(target_id, attacker_id, *args, **kwargs)
+            for item, fatal in zip(self.hits, saved):
+                item['fatal'] = fatal
+            self._inq_authoritative_killer_id = attacker_id
+            logger.warning('arena kill event confirmed killer vehicle id=%s', attacker_id)
+            return result
+
+        # Only when the kill event has no attacker do we retain the provisional
+        # VEHICLE_HEALTH result.
         authoritative = int(getattr(self, '_inq_authoritative_killer_id', 0) or 0)
-        if authoritative and int(target_id or 0) == int(self.player_vehicle_id or 0):
+        if is_player and authoritative:
             saved = [bool(item.get('fatal')) for item in self.hits]
             result = original_killed(target_id, attacker_id, *args, **kwargs)
             for item, fatal in zip(self.hits, saved):
@@ -172,7 +194,7 @@ def _install_fatal_authority():
     controller._on_vehicle_killed = types.MethodType(killed_authoritative, controller, controller.__class__)
     controller._inq_authoritative_killer_id = 0
     controller._inq_fatal_authority_installed = True
-    logger.warning('runtime lethal VEHICLE_HEALTH authority installed')
+    logger.warning('runtime lethal authority installed: arena kill event has final priority')
 
 
 def _find_hit_for_impact(controller, impact, used):
