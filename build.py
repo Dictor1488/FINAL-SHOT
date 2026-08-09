@@ -16,15 +16,15 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / 'build.json'
 BUILD_DIR = ROOT / 'build'
 
-# Only runtime modules that are required by the current battle viewer belong here.
+# Runtime modules in the same explicit order used by WoT ScriptLoader.
 PYTHON_SOURCES: Tuple[Path, ...] = (
     ROOT / 'python/gui/mods/mod_inq_final_shot.py',
-    ROOT / 'python/gui/mods/mod_zz_inq_final_shot_health.py',
-    ROOT / 'python/gui/mods/mod_zzz_inq_final_shot_impacts.py',
-    ROOT / 'python/gui/mods/mod_zzzzz_inq_final_shot_battle_viewer.py',
-    ROOT / 'python/gui/mods/mod_zzzzzzz_inq_final_shot_stable_markers.py',
-    ROOT / 'python/gui/mods/mod_zzzzzzzz_inq_final_shot_observer_visibility.py',
-    ROOT / 'python/gui/mods/mod_zzzzzzzzz_inq_final_shot_runtime_fix.py',
+    ROOT / 'python/gui/mods/mod_inq_final_shot_10_health.py',
+    ROOT / 'python/gui/mods/mod_inq_final_shot_20_impacts.py',
+    ROOT / 'python/gui/mods/mod_inq_final_shot_30_battle_viewer.py',
+    ROOT / 'python/gui/mods/mod_inq_final_shot_40_stable_markers.py',
+    ROOT / 'python/gui/mods/mod_inq_final_shot_50_observer_visibility.py',
+    ROOT / 'python/gui/mods/mod_inq_final_shot_60_runtime.py',
 )
 PYTHON_BYTECODE: Tuple[Path, ...] = tuple(path.with_suffix('.pyc') for path in PYTHON_SOURCES)
 PYTHON_PACKAGE_FILES: Tuple[Tuple[Path, str], ...] = tuple(
