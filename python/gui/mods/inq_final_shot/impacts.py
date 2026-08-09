@@ -66,8 +66,6 @@ def _capture(vehicle, attacker_id, hit_points, effects_index, damage, damage_fac
         for packed_point in hit_points or ():
             try:
                 values = DamageFromShotDecoder.parseHitPoint(packed_point, collisions)
-                # Current client signature: component, material, start, end,
-                # hit effect, pierced flag, damaged component.
                 component = values[0]
                 start = values[2]
                 end = values[3]
@@ -101,9 +99,6 @@ def _show_damage_from_shot(self, *args, **kwargs):
     if _ORIGINAL_SHOW_DAMAGE is not None:
         result = _ORIGINAL_SHOW_DAMAGE(self, *args, **kwargs)
     try:
-        # self, attackerID, hitPoints, effectsIndex, prefabEffectsIndex,
-        # damage, damageFactor, lastMaterialIsShield, shellVelocity,
-        # gunInstallationIndex
         _capture(self, args[0], args[1], args[2], args[4], args[5])
     except Exception:
         logger.exception('showDamageFromShot hook failed')

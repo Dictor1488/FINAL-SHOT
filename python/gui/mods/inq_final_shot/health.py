@@ -99,8 +99,6 @@ def _on_vehicle_feedback(self, event_id, vehicle_id, value):
     if damage <= 0:
         return
     attacker_id = _vehicle_id_from_info(attacker_info)
-
-    # A detailed event can arrive immediately before the health event.
     if self.hits:
         latest = self.hits[-1]
         if (latest.get('attackerID') == attacker_id and
@@ -142,7 +140,6 @@ def _on_detailed_feedback(self, events):
                 '_fallback': False,
                 '_time': _now(),
             }
-            # If VEHICLE_HEALTH arrived first, enrich that fallback row.
             if self.hits:
                 latest = self.hits[-1]
                 if (latest.get('_fallback') and
@@ -214,7 +211,6 @@ controller._on_vehicle_feedback = types.MethodType(_on_vehicle_feedback, control
 controller._bind_events = types.MethodType(_bind_events, controller, controller.__class__)
 controller._unbind_events = types.MethodType(_unbind_events, controller, controller.__class__)
 
-# Normally mods are imported before entering battle. Handle late reloads safely.
 if controller.in_battle:
     try:
         player = BigWorld.player()

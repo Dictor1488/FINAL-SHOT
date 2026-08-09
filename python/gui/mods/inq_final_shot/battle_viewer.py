@@ -34,7 +34,7 @@ except ImportError:
 
 try:
     from gui.mods import mod_inq_final_shot as final_shot
-    from gui.mods import mod_zzz_inq_final_shot_impacts as impacts
+    from gui.mods import mod_inq_final_shot_20_impacts as impacts
 except ImportError:
     final_shot = None
     impacts = None

@@ -8,10 +8,10 @@ import types
 
 import BigWorld
 
-logger = logging.getLogger('inq.final_shot.runtime_fix')
+logger = logging.getLogger('inq.final_shot.runtime')
 
 try:
-    from gui.mods import mod_zzzzz_inq_final_shot_battle_viewer as viewer_mod
+    from gui.mods import mod_inq_final_shot_30_battle_viewer as viewer_mod
 except ImportError:
     viewer_mod = None
 
@@ -22,21 +22,21 @@ if viewer_mod is not None:
         viewer_mod.g_keyEventHandlers = set()
 
 try:
-    from gui.mods import mod_zzzzzzz_inq_final_shot_stable_markers as stable_mod
+    from gui.mods import mod_inq_final_shot_40_stable_markers as stable_mod
 except Exception:
     stable_mod = None
     logger.exception('failed recovering stable marker module')
 
 try:
-    from gui.mods import mod_zzzzzzzz_inq_final_shot_observer_visibility as observer_mod
+    from gui.mods import mod_inq_final_shot_50_observer_visibility as observer_mod
 except Exception:
     observer_mod = None
     logger.exception('failed recovering observer visibility module')
 
 try:
     from gui.mods import mod_inq_final_shot as final_shot
-    from gui.mods import mod_zz_inq_final_shot_health as health_mod
-    from gui.mods import mod_zzz_inq_final_shot_impacts as impacts_mod
+    from gui.mods import mod_inq_final_shot_10_health as health_mod
+    from gui.mods import mod_inq_final_shot_20_impacts as impacts_mod
 except ImportError:
     final_shot = None
     health_mod = None
@@ -44,7 +44,6 @@ except ImportError:
 
 
 def _disable_legacy_panel():
-    """Never load the obsolete FinalShotPanelBattle summary SWF."""
     if final_shot is None:
         return
     controller = getattr(final_shot, '_controller', None)
@@ -220,7 +219,6 @@ def _find_hit_for_impact(controller, impact, used):
 
 
 def _cache_last_real_impacts(self):
-    """Build markers from real impacts; impact attackerID owns identity."""
     self._cached_markers = []
     controller = getattr(self, 'controller', None)
     if controller is None or impacts_mod is None:
@@ -248,7 +246,6 @@ def _cache_last_real_impacts(self):
                 if matched_damage:
                     damage = matched_damage
 
-            # Identity is authoritative from this exact showDamageFromShot impact.
             vehicle_name = u''
             player_name = u''
             if attacker_id:

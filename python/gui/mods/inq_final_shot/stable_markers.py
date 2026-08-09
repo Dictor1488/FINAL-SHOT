@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Low-cost passive Final Shot markers for the stock spectator camera.
-
-The wreck transform is sampled slowly only while it is still moving. Once stable,
-impact world points are frozen. Screen projection is throttled and Scaleform is
-called only when marker positions/visibility actually changed.
-"""
+"""Low-cost passive Final Shot markers for the stock spectator camera."""
 
 from __future__ import absolute_import
 
@@ -13,16 +8,16 @@ import logging
 import BigWorld
 
 try:
-    from gui.mods import mod_zzzzz_inq_final_shot_battle_viewer as viewer_mod
-    from gui.mods import mod_zzz_inq_final_shot_impacts as impacts
+    from gui.mods import mod_inq_final_shot_30_battle_viewer as viewer_mod
+    from gui.mods import mod_inq_final_shot_20_impacts as impacts
 except ImportError:
     viewer_mod = None
     impacts = None
 
 logger = logging.getLogger('inq.final_shot.stable_markers')
 
-PROJECT_INTERVAL = 0.10       # 10 Hz screen projection
-WRECK_SAMPLE_INTERVAL = 0.25  # 4 Hz wreck tracking while it settles
+PROJECT_INTERVAL = 0.10
+WRECK_SAMPLE_INTERVAL = 0.25
 STABLE_SECONDS = 1.50
 MOVE_EPSILON = 0.012
 ROTATE_EPSILON = 0.0025
@@ -66,12 +61,9 @@ def _root_moved(previous, current):
 
 
 def _remove_legacy_input_handlers(instance):
-    """Remove any input handlers left by an older viewer implementation."""
     mouse_handlers = getattr(viewer_mod, 'g_mouseEventHandlers', ())
     key_handlers = getattr(viewer_mod, 'g_keyEventHandlers', ())
-    for collection, method_name in (
-            (mouse_handlers, 'handle_mouse'),
-            (key_handlers, 'handle_key')):
+    for collection, method_name in ((mouse_handlers, 'handle_mouse'), (key_handlers, 'handle_key')):
         try:
             for handler in list(collection):
                 owner = getattr(handler, 'im_self', getattr(handler, '__self__', None))
@@ -147,18 +139,15 @@ def _sample_wreck(self, now):
     if now < float(getattr(self, '_inq_next_wreck_sample', 0.0) or 0.0):
         return
     self._inq_next_wreck_sample = now + WRECK_SAMPLE_INTERVAL
-
     current = _root_state(self)
     previous = getattr(self, '_inq_last_root_state', None)
     moved = _root_moved(previous, current)
     self._inq_last_root_state = current
-
     if moved:
         self._inq_stable_since = now
         self._inq_world_frozen = False
         _refresh_world_points(self, False)
         return
-
     if not getattr(self, '_inq_world_frozen', False):
         stable_since = float(getattr(self, '_inq_stable_since', now) or now)
         _refresh_world_points(self, False)
@@ -171,7 +160,6 @@ def _marker_data(self):
     width, height = viewer_mod.GUI.screenResolution()
     width = float(width)
     height = float(height)
-
     for item in self._cached_markers:
         world = item.get('world')
         visible = False
@@ -180,9 +168,7 @@ def _marker_data(self):
         if world is not None:
             try:
                 projected = viewer_mod.projectPoint(world)
-                visible = bool(projected.w > 0.0 and
-                               -1.08 <= projected.x <= 1.08 and
-                               -1.08 <= projected.y <= 1.08)
+                visible = bool(projected.w > 0.0 and -1.08 <= projected.x <= 1.08 and -1.08 <= projected.y <= 1.08)
                 if visible:
                     x = (projected.x + 1.0) * 0.5 * width
                     y = (1.0 - projected.y) * 0.5 * height
@@ -287,9 +273,7 @@ def _install():
         return
     if getattr(cls, '_inq_stable_marker_patch', False):
         return
-
     _remove_legacy_input_handlers(instance)
-
     cls._inq_original_close = cls.close
     cls._cache_hit_data = _cache_hits
     cls._marker_data = _marker_data
@@ -299,7 +283,6 @@ def _install():
     cls.handle_mouse = lambda self, event: False
     cls.handle_key = lambda self, event: False
     cls._apply_camera = lambda self: None
-
     cls._inq_stable_marker_patch = True
     instance._inq_last_root_state = None
     instance._inq_last_screen = None
