@@ -10,11 +10,15 @@ import gui.mods as _mods
 # during early mod discovery, which crashes the whole client.
 from gui.mods.inq_final_shot import core as _core
 
-# Re-export the core namespace through this real ScriptLoader module so legacy
-# internal references to gui.mods.mod_inq_final_shot keep working naturally.
+# Re-export the core namespace through this real ScriptLoader module.
 for _name in dir(_core):
     if not _name.startswith('__'):
         globals()[_name] = getattr(_core, _name)
+
+# Internal modules still import gui.mods.mod_inq_final_shot. Expose the already
+# loaded core module as a normal package attribute before importing extensions.
+# This avoids sys.modules manipulation while making the legacy import resolve.
+setattr(_mods, 'mod_inq_final_shot', _core)
 
 # Load extensions in one explicit order. Compatibility attributes are placed on
 # the gui.mods package itself; `from gui.mods import <name>` can resolve them
