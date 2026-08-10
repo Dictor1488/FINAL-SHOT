@@ -4,6 +4,8 @@
   "fatalLabel": "DESTRUCTION",
   "unknownVehicle": "Unknown vehicle",
   "unknownPlayer": "Unknown player",
+  "avgDamageShort": "avg dmg",
+  "penetrationUnit": "mm",
   "shellAP": "AP",
   "shellAPGold": "AP · gold",
   "shellAPHE": "APHE",
