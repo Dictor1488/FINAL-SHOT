@@ -4,6 +4,8 @@
   "fatalLabel": "ЗНИЩЕННЯ",
   "unknownVehicle": "Невідома машина",
   "unknownPlayer": "Невідомий гравець",
+  "avgDamageShort": "сер. шкода",
+  "penetrationUnit": "мм",
   "shellAP": "ББ",
   "shellAPGold": "ББ · голда",
   "shellAPHE": "ББФ",
