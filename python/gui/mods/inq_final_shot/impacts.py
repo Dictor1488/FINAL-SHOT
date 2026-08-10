@@ -24,6 +24,14 @@ logger = logging.getLogger('inq.final_shot.impacts')
 _IMPACTS = deque(maxlen=20)
 _ORIGINAL_SHOW_DAMAGE = getattr(Vehicle, 'showDamageFromShot', None)
 
+_SHELL_KIND_KEYS = {
+    'ARMOR_PIERCING': 'shellAP',
+    'ARMOR_PIERCING_HE': 'shellAPHE',
+    'ARMOR_PIERCING_CR': 'shellAPCR',
+    'HOLLOW_CHARGE': 'shellHEAT',
+    'HIGH_EXPLOSIVE': 'shellHE',
+}
+
 
 def _part_name(index):
     if TankPartIndexes is not None:
@@ -120,6 +128,36 @@ def _match_impact(hit):
     return best
 
 
+def _shell_key_from_effects(attacker_id, effects_index):
+    """Resolve the exact configured shell using the shot effects index from showDamageFromShot."""
+    try:
+        entity = BigWorld.entity(int(attacker_id))
+        if entity is None:
+            entity = BigWorld.entities.get(int(attacker_id))
+        descriptor = getattr(entity, 'typeDescriptor', None) if entity is not None else None
+        gun = getattr(descriptor, 'gun', None) if descriptor is not None else None
+        shots = getattr(gun, 'shots', ()) if gun is not None else ()
+        wanted = int(effects_index or 0)
+        if not wanted:
+            return None
+
+        for shot in shots:
+            shell = getattr(shot, 'shell', None)
+            if shell is None:
+                continue
+            shell_effects = getattr(shell, 'effectsIndex', None)
+            shot_effects = getattr(shot, 'effectsIndex', None)
+            if shell_effects != wanted and shot_effects != wanted:
+                continue
+            key = _SHELL_KIND_KEYS.get(str(getattr(shell, 'kind', '')))
+            if key and bool(getattr(shell, 'isGold', False)):
+                key += 'Gold'
+            return key
+    except Exception:
+        logger.debug('failed to resolve shell from effects index', exc_info=True)
+    return None
+
+
 def _decorate_hits(controller):
     try:
         for hit in controller.hits:
@@ -132,8 +170,11 @@ def _decorate_hits(controller):
             point = points[0]
             end = point.get('end') or [0.0, 0.0, 0.0]
             start = point.get('start') or [0.0, 0.0, 0.0]
+            effects_index = int(impact.get('effectsIndex', 0) or 0)
             hit['impactPart'] = point.get('part', 'unknown')
             hit['impactEffect'] = int(point.get('effect', 0))
+            hit['effectsIndex'] = effects_index
+            hit['shellKey'] = _shell_key_from_effects(hit.get('attackerID', 0), effects_index)
             hit['impactX'] = float(end[0])
             hit['impactY'] = float(end[1])
             hit['impactZ'] = float(end[2])
