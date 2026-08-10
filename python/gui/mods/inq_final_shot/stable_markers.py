@@ -120,33 +120,72 @@ def _attacker_descriptor(attacker_id):
     return None
 
 
+def _shot_values(shot):
+    try:
+        shell = shot.shell
+        armor_damage = getattr(shell, 'armorDamage', ())
+        piercing_power = getattr(shot, 'piercingPower', ())
+        if not armor_damage or not piercing_power:
+            return None
+        avg_damage = int(round(float(armor_damage[0])))
+        base_pen = int(round(float(piercing_power[0])))
+        if avg_damage <= 0 and base_pen <= 0:
+            return None
+        return avg_damage, base_pen
+    except Exception:
+        return None
+
+
 def _shell_stats_text(self, attacker_id, hit):
     """Resolve nominal shell damage and base (100 m) penetration from the configured gun."""
     try:
         descriptor = _attacker_descriptor(attacker_id)
         gun = getattr(descriptor, 'gun', None) if descriptor is not None else None
-        shots = getattr(gun, 'shots', ()) if gun is not None else ()
-        wanted_key = hit.get('shellKey')
-        if not wanted_key:
+        shots = list(getattr(gun, 'shots', ()) if gun is not None else ())
+        if not shots:
             return u''
 
-        for shot in shots:
-            if _shell_key(shot) != wanted_key:
-                continue
-            shell = shot.shell
-            armor_damage = getattr(shell, 'armorDamage', ())
-            piercing_power = getattr(shot, 'piercingPower', ())
-            if not armor_damage or not piercing_power:
-                continue
-            avg_damage = int(round(float(armor_damage[0])))
-            base_pen = int(round(float(piercing_power[0])))
-            if avg_damage <= 0 and base_pen <= 0:
-                return u''
-            avg_label = self.controller._tr('avgDamageShort', u'avg dmg')
-            pen_unit = self.controller._tr('penetrationUnit', u'mm')
-            return u'%d %s · %d %s' % (avg_damage, avg_label, base_pen, pen_unit)
+        wanted_key = hit.get('shellKey')
+        selected = None
+
+        # First use the exact shell identity from the battle feedback event.
+        if wanted_key and not unicode(wanted_key).startswith(u'shellUnknown'):
+            for shot in shots:
+                if _shell_key(shot) == wanted_key and _shot_values(shot) is not None:
+                    selected = shot
+                    break
+
+        # Some client builds expose shell types differently. Fall back to gold/non-gold
+        # identity, which still distinguishes the usual standard/premium rounds.
+        candidates = [shot for shot in shots if _shot_values(shot) is not None]
+        if selected is None and candidates:
+            wanted_gold = bool(hit.get('isGold'))
+            gold_candidates = []
+            for shot in candidates:
+                try:
+                    if bool(getattr(shot.shell, 'isGold', False)) == wanted_gold:
+                        gold_candidates.append(shot)
+                except Exception:
+                    pass
+            if gold_candidates:
+                candidates = gold_candidates
+
+            # If several rounds remain (for example AP + HE), choose the nominal
+            # damage closest to the actually received damage instead of returning blank.
+            actual_damage = int(hit.get('damage', 0) or 0)
+            selected = min(
+                candidates,
+                key=lambda shot: abs((_shot_values(shot) or (0, 0))[0] - actual_damage))
+
+        values = _shot_values(selected) if selected is not None else None
+        if values is None:
+            return u''
+        avg_damage, base_pen = values
+        avg_label = self.controller._tr('avgDamageShort', u'avg dmg')
+        pen_unit = self.controller._tr('penetrationUnit', u'mm')
+        return u'%d %s · %d %s' % (avg_damage, avg_label, base_pen, pen_unit)
     except Exception:
-        logger.debug('failed to resolve shell base stats', exc_info=True)
+        logger.exception('failed to resolve shell base stats')
     return u''
 
 
