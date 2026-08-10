@@ -39,6 +39,9 @@ _SHELL_KIND_KEYS = {
     'HIGH_EXPLOSIVE': 'shellHE',
 }
 
+# Three 58 px cards need enough separation not to overlap around nearby impacts.
+_MARKER_OFFSETS = (-66, 66, 0)
+
 
 def _distance_sq(a, b):
     try:
@@ -88,13 +91,40 @@ def _shell_key(shot):
         return None
 
 
-def _shell_stats_text(self, attacker_id, hit):
-    """Resolve nominal shell damage and base (100 m) penetration from the attacker descriptor."""
+def _attacker_descriptor(attacker_id):
+    """Prefer the configured in-battle VehicleDescr; arena vehicleType is only a fallback."""
+    try:
+        entity = BigWorld.entity(int(attacker_id))
+        descriptor = getattr(entity, 'typeDescriptor', None) if entity is not None else None
+        if descriptor is not None and getattr(descriptor, 'gun', None) is not None:
+            return descriptor
+    except Exception:
+        pass
+
+    try:
+        entity = BigWorld.entities.get(int(attacker_id))
+        descriptor = getattr(entity, 'typeDescriptor', None) if entity is not None else None
+        if descriptor is not None and getattr(descriptor, 'gun', None) is not None:
+            return descriptor
+    except Exception:
+        pass
+
     try:
         arena = getattr(BigWorld.player(), 'arena', None)
         raw = arena.vehicles.get(int(attacker_id)) if arena is not None else None
         descriptor = raw.get('vehicleType') if raw else None
-        gun = getattr(descriptor, 'gun', None)
+        if descriptor is not None and getattr(descriptor, 'gun', None) is not None:
+            return descriptor
+    except Exception:
+        pass
+    return None
+
+
+def _shell_stats_text(self, attacker_id, hit):
+    """Resolve nominal shell damage and base (100 m) penetration from the configured gun."""
+    try:
+        descriptor = _attacker_descriptor(attacker_id)
+        gun = getattr(descriptor, 'gun', None) if descriptor is not None else None
         shots = getattr(gun, 'shots', ()) if gun is not None else ()
         wanted_key = hit.get('shellKey')
         if not wanted_key:
@@ -132,6 +162,10 @@ def _cache_hits(self):
             points = hit.get('impactPoints') or ()
             if not points:
                 continue
+            damage = int(hit.get('damage', 0) or 0)
+            if damage <= 0:
+                # Received-hit history is damage-only; never render stale/empty rows such as "-0".
+                continue
             point = points[0]
             if self._world_point(point) is None:
                 continue
@@ -150,11 +184,11 @@ def _cache_hits(self):
                 'fatal': bool(hit.get('fatal')),
                 'player': player_name,
                 'vehicle': vehicle_name,
-                'damage': int(hit.get('damage', 0) or 0),
+                'damage': damage,
                 'statsText': _shell_stats_text(self, attacker_id, hit),
                 'icon': self._attacker_icon(attacker_id),
                 'side': 1 if hit_index % 2 else -1,
-                'offsetY': (-30, 18, -8)[(hit_index - 1) % 3],
+                'offsetY': _MARKER_OFFSETS[(hit_index - 1) % len(_MARKER_OFFSETS)],
             })
     except Exception:
         logger.exception('failed to cache hit markers')
