@@ -31,6 +31,14 @@ MOVE_EPSILON = 0.012
 ROTATE_EPSILON = 0.0025
 PIXEL_EPSILON = 0.25
 
+_SHELL_KIND_KEYS = {
+    'ARMOR_PIERCING': 'shellAP',
+    'ARMOR_PIERCING_HE': 'shellAPHE',
+    'ARMOR_PIERCING_CR': 'shellAPCR',
+    'HOLLOW_CHARGE': 'shellHEAT',
+    'HIGH_EXPLOSIVE': 'shellHE',
+}
+
 
 def _distance_sq(a, b):
     try:
@@ -69,6 +77,49 @@ def _root_moved(previous, current):
     return _distance_sq(old_forward, new_forward) > ROTATE_EPSILON * ROTATE_EPSILON
 
 
+def _shell_key(shot):
+    try:
+        shell = shot.shell
+        key = _SHELL_KIND_KEYS.get(str(shell.kind))
+        if key and bool(getattr(shell, 'isGold', False)):
+            key += 'Gold'
+        return key
+    except Exception:
+        return None
+
+
+def _shell_stats_text(self, attacker_id, hit):
+    """Resolve nominal shell damage and base (100 m) penetration from the attacker descriptor."""
+    try:
+        arena = getattr(BigWorld.player(), 'arena', None)
+        raw = arena.vehicles.get(int(attacker_id)) if arena is not None else None
+        descriptor = raw.get('vehicleType') if raw else None
+        gun = getattr(descriptor, 'gun', None)
+        shots = getattr(gun, 'shots', ()) if gun is not None else ()
+        wanted_key = hit.get('shellKey')
+        if not wanted_key:
+            return u''
+
+        for shot in shots:
+            if _shell_key(shot) != wanted_key:
+                continue
+            shell = shot.shell
+            armor_damage = getattr(shell, 'armorDamage', ())
+            piercing_power = getattr(shot, 'piercingPower', ())
+            if not armor_damage or not piercing_power:
+                continue
+            avg_damage = int(round(float(armor_damage[0])))
+            base_pen = int(round(float(piercing_power[0])))
+            if avg_damage <= 0 and base_pen <= 0:
+                return u''
+            avg_label = self.controller._tr('avgDamageShort', u'avg dmg')
+            pen_unit = self.controller._tr('penetrationUnit', u'mm')
+            return u'%d %s · %d %s' % (avg_damage, avg_label, base_pen, pen_unit)
+    except Exception:
+        logger.debug('failed to resolve shell base stats', exc_info=True)
+    return u''
+
+
 def _cache_hits(self):
     self._cached_markers = []
     if self.controller is None:
@@ -100,6 +151,7 @@ def _cache_hits(self):
                 'player': player_name,
                 'vehicle': vehicle_name,
                 'damage': int(hit.get('damage', 0) or 0),
+                'statsText': _shell_stats_text(self, attacker_id, hit),
                 'icon': self._attacker_icon(attacker_id),
                 'side': 1 if hit_index % 2 else -1,
                 'offsetY': (-30, 18, -8)[(hit_index - 1) % 3],
@@ -186,6 +238,7 @@ def _marker_data(self):
             'player': item['player'],
             'vehicle': item['vehicle'],
             'damage': item['damage'],
+            'statsText': item.get('statsText', u''),
             'icon': item['icon'],
             'side': item['side'],
             'offsetY': item['offsetY'],

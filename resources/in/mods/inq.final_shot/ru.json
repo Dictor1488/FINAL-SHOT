@@ -4,6 +4,8 @@
   "fatalLabel": "УНИЧТОЖЕНИЕ",
   "unknownVehicle": "Неизвестная машина",
   "unknownPlayer": "Неизвестный игрок",
+  "avgDamageShort": "ср. урон",
+  "penetrationUnit": "мм",
   "shellAP": "ББ",
   "shellAPGold": "ББ · голда",
   "shellAPHE": "ББФ",
