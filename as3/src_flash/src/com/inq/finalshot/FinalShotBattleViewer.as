@@ -157,6 +157,8 @@ package com.inq.finalshot
             var offsetY:Number = Number(data.offsetY);
             var calloutX:Number = side * 94;
             var calloutY:Number = offsetY;
+            var cardWidth:Number = 214;
+            var cardHeight:Number = 58;
 
             var projectile:Sprite = new Sprite();
             projectile.rotation = side > 0 ? 0 : 180;
@@ -169,26 +171,26 @@ package com.inq.finalshot
             marker.addChildAt(line, 0);
 
             var card:Sprite = new Sprite();
-            card.x = side > 0 ? calloutX : calloutX - 186;
-            card.y = calloutY - 20;
+            card.x = side > 0 ? calloutX : calloutX - cardWidth;
+            card.y = calloutY - cardHeight / 2;
             card.graphics.lineStyle(1, color, fatal ? 0.9 : 0.55);
             card.graphics.beginFill(0x081018, 0.82);
-            card.graphics.drawRoundRect(0, 0, 186, 42, 7, 7);
+            card.graphics.drawRoundRect(0, 0, cardWidth, cardHeight, 7, 7);
             card.graphics.endFill();
             marker.addChild(card);
 
             var iconHolder:Sprite = new Sprite();
             iconHolder.x = 3;
-            iconHolder.y = 5;
+            iconHolder.y = 13;
             card.addChild(iconHolder);
             _addIcon(iconHolder, String(data.icon != null ? data.icon : ""));
 
             var nick:TextField = _text(13, fatal ? 0xFF7575 : 0xFFFFFF, true);
             nick.text = String(data.player != null && String(data.player).length > 0 ? data.player : data.vehicle);
             nick.x = 64;
-            nick.y = 4;
-            nick.width = 116;
-            nick.height = 19;
+            nick.y = 3;
+            nick.width = 144;
+            nick.height = 18;
             card.addChild(nick);
 
             var sub:TextField = _text(10, 0xB9C2CA, false);
@@ -196,10 +198,19 @@ package com.inq.finalshot
             var damage:String = String(data.damage != null ? data.damage : "");
             sub.text = vehicle + (damage.length > 0 ? "   -" + damage : "");
             sub.x = 64;
-            sub.y = 22;
-            sub.width = 116;
+            sub.y = 20;
+            sub.width = 144;
             sub.height = 16;
             card.addChild(sub);
+
+            var stats:TextField = _text(10, 0xD9E1E7, false);
+            stats.text = String(data.statsText != null ? data.statsText : "");
+            stats.x = 64;
+            stats.y = 37;
+            stats.width = 144;
+            stats.height = 16;
+            stats.visible = stats.text.length > 0;
+            card.addChild(stats);
 
             card.filters = [new DropShadowFilter(2, 90, 0, 0.85, 5, 5, 1, 1)];
             return marker;
