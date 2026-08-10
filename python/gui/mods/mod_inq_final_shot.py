@@ -3,12 +3,55 @@
 
 from __future__ import absolute_import
 
-import gui.mods as _mods
+import types
 
-# Load the real implementation package. Do not replace entries in sys.modules:
-# the WoT embedded Python environment may expose sys as an unavailable stub
-# during early mod discovery, which crashes the whole client.
-from gui.mods.inq_final_shot import core as _core
+import gui.mods as _mods
+from gui.Scaleform.framework import g_entitiesFactories as _factories
+
+
+# core.py still contains the retired FinalShotPanelBattle registration. The
+# factory logs an ERROR when removeSettings() is called for an alias that does
+# not exist, even though core.py catches the exception. Suppress only that old
+# removal while core initializes; the active FinalShotBattleViewer registration
+# is not touched.
+_original_remove_settings = _factories.removeSettings
+
+
+def _remove_settings_without_legacy_error(alias, *args, **kwargs):
+    if alias == 'FinalShotPanelBattle':
+        return None
+    return _original_remove_settings(alias, *args, **kwargs)
+
+
+_factories.removeSettings = _remove_settings_without_legacy_error
+try:
+    # Load the real implementation package. Do not replace entries in
+    # sys.modules: the WoT embedded Python environment may expose sys as an
+    # unavailable stub during early mod discovery.
+    from gui.mods.inq_final_shot import core as _core
+finally:
+    _factories.removeSettings = _original_remove_settings
+
+# core registered the retired view after the suppressed removal. Remove that
+# registration now while it is known to exist. This prevents any later attempt
+# to load the removed FinalShotPanelBattle.swf.
+try:
+    _original_remove_settings('FinalShotPanelBattle')
+except Exception:
+    pass
+
+# Disable the old panel injector at the source. The passive battle viewer loaded
+# below is the only UI that should be opened after the player's vehicle dies.
+def _no_legacy_inject(self, attempt=0):
+    self.inject_callback = None
+    return None
+
+
+try:
+    _core._controller._inject = types.MethodType(
+        _no_legacy_inject, _core._controller, _core._controller.__class__)
+except Exception:
+    pass
 
 # Re-export the core namespace through this real ScriptLoader module.
 for _name in dir(_core):
