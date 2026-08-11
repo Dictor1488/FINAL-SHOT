@@ -38,4 +38,8 @@ setattr(_mods, 'mod_inq_final_shot_40_stable_markers', _stable_markers)
 from gui.mods.inq_final_shot import observer_visibility as _observer_visibility
 setattr(_mods, 'mod_inq_final_shot_50_observer_visibility', _observer_visibility)
 
+# Temporary v0.2.7 diagnostics: one ERROR-level dump per rendered hit so the
+# actual WoT shell descriptor fields are visible in a normal python.log.
+from gui.mods.inq_final_shot import diagnostics as _diagnostics
+
 from gui.mods.inq_final_shot import runtime as _runtime
