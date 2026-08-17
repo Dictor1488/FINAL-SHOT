@@ -14,6 +14,11 @@ except ImportError:
     viewer_mod = None
     stable_mod = None
 
+try:
+    from gui.mods import mod_inq_final_shot_10_health as health_mod
+except ImportError:
+    health_mod = None
+
 logger = logging.getLogger('inq.final_shot.observer_visibility')
 IDLE_INTERVAL = 0.10
 
@@ -39,6 +44,73 @@ def _observed_vehicle_id():
         return 0
 
 
+def _attached_live_vehicle():
+    """Return the avatar-attached live vehicle, or (None, 0, 0)."""
+    try:
+        player = BigWorld.player()
+        if player is None:
+            return None, 0, 0
+        attached = getattr(player, 'vehicle', None)
+        if attached is None:
+            return None, 0, 0
+        vehicle_id = int(getattr(attached, 'id', 0) or 0)
+        health = int(getattr(attached, 'health', 0) or 0)
+        if not vehicle_id or health <= 0:
+            return None, vehicle_id, health
+        return attached, vehicle_id, health
+    except Exception:
+        return None, 0, 0
+
+
+def _reset_if_respawned(self):
+    """Close stale death markers when Frontline reattaches a living own vehicle.
+
+    Epic/Frontline can reuse exactly the same vehicle entity ID after death. In
+    that flow a positive VEHICLE_HEALTH feedback event is not guaranteed, so the
+    reliable signal is the avatar being attached again to a live vehicle while
+    the postmortem Final Shot viewer is still active.
+    """
+    attached, attached_id, health = _attached_live_vehicle()
+    if attached is None:
+        return False
+
+    dead_vehicle_id = int(getattr(self, 'vehicle_id', 0) or 0)
+    if not dead_vehicle_id or attached_id != dead_vehicle_id:
+        return False
+
+    controller = getattr(self, 'controller', None)
+    if controller is None:
+        self.close()
+        return True
+
+    try:
+        if health_mod is not None:
+            reset = getattr(health_mod, '_reset_respawn_state', None)
+            if reset is not None:
+                reset(controller, attached_id, health)
+                logger.info('live avatar reattach detected; closed stale Final Shot after respawn')
+                return True
+    except Exception:
+        logger.exception('health reset helper failed after respawn')
+
+    # Safety fallback: never leave stale markers on a newly alive player even if
+    # the health compatibility helper is unavailable in a particular package.
+    try:
+        self.close()
+    except Exception:
+        pass
+    try:
+        controller.pending_show = False
+        controller.hits.clear()
+        controller.player_vehicle_id = attached_id
+        controller._final_shot_last_health = health
+        controller._final_shot_dead = False
+        controller._inq_authoritative_killer_id = 0
+    except Exception:
+        logger.exception('fallback Final Shot reset failed after respawn')
+    return True
+
+
 def _set_view_visible(self, visible):
     visible = bool(visible)
     self._inq_observer_visible = visible
@@ -56,6 +128,12 @@ def _set_view_visible(self, visible):
 def _frame_observer_only(self):
     self.frame_callback = None
     if not self.active:
+        return
+
+    # Frontline/replay respawn path: the same playerVehicleID can come back to
+    # life without a positive health feedback event. Check the actual avatar
+    # attachment every viewer tick and tear down the previous-life overlay first.
+    if _reset_if_respawned(self):
         return
 
     delay = IDLE_INTERVAL
