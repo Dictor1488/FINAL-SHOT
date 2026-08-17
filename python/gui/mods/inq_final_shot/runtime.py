@@ -218,6 +218,37 @@ def _find_hit_for_impact(controller, impact, used):
     return rows[best_index]
 
 
+def _marker_stats_text(self, impact, matched, attacker_id, damage):
+    """Keep the shell base penetration/average-damage line in the runtime cache.
+
+    stable_markers normally builds this field itself. The runtime impact cache
+    replaces that builder to preserve exact impact/attacker identity, so it must
+    explicitly carry the same statsText value into every marker.
+    """
+    if stable_mod is None:
+        return u''
+    try:
+        stats_hit = dict(matched) if matched is not None else {}
+        stats_hit['damage'] = int(damage or 0)
+
+        # Prefer the exact shell resolved from the captured shot effects. This is
+        # especially useful when detailed feedback arrived late or used an unknown
+        # shell key; stable_markers still retains its damage-based fallback.
+        try:
+            effects_index = int(impact.get('effectsIndex', 0) or 0)
+            exact_key = impacts_mod._shell_key_from_effects(attacker_id, effects_index)
+            if exact_key:
+                stats_hit['shellKey'] = exact_key
+                stats_hit['isGold'] = unicode(exact_key).endswith(u'Gold')
+        except Exception:
+            pass
+
+        return stable_mod._shell_stats_text(self, attacker_id, stats_hit)
+    except Exception:
+        logger.exception('failed restoring shell stats text')
+        return u''
+
+
 def _cache_last_real_impacts(self):
     self._cached_markers = []
     controller = getattr(self, 'controller', None)
@@ -257,6 +288,12 @@ def _cache_last_real_impacts(self):
                 vehicle_name = unicode(matched.get('vehicle') or u'')
                 player_name = unicode(matched.get('player') or u'')
 
+            stats_text = _marker_stats_text(self, impact, matched, attacker_id, damage)
+            if stable_mod is not None:
+                offsets = getattr(stable_mod, '_MARKER_OFFSETS', (-66, 66, 0))
+            else:
+                offsets = (-66, 66, 0)
+
             built.append({
                 'attackerID': attacker_id,
                 'point': point,
@@ -265,9 +302,10 @@ def _cache_last_real_impacts(self):
                 'player': player_name,
                 'vehicle': vehicle_name,
                 'damage': damage,
+                'statsText': stats_text,
                 'icon': self._attacker_icon(attacker_id),
                 'side': 1 if hit_index % 2 else -1,
-                'offsetY': (-30, 18, -8)[(hit_index - 1) % 3],
+                'offsetY': offsets[(hit_index - 1) % len(offsets)],
             })
 
         if lethal_attacker:
