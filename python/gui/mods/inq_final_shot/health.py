@@ -241,7 +241,10 @@ def _bind_events(self, player):
         final_shot.logger.exception('feedback subscribe failed')
         self.feedback = None
     self._final_shot_last_health = _player_health(self)
-    self._final_shot_dead = self._final_shot_last_health <= 0
+    # Do not infer a death from a zero here: on battle startup the vehicle entity
+    # can briefly be unavailable. Only an actual VEHICLE_HEALTH=0 event arms the
+    # respawn reset, so the first normal damage event cannot be mistaken for respawn.
+    self._final_shot_dead = False
     try:
         self.arena = getattr(player, 'arena', None)
         if self.arena is not None:
