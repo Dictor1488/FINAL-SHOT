@@ -3,6 +3,8 @@
 
 Adds the reliable VEHICLE_HEALTH channel and keeps the detailed player feedback
 channel for shell information. Duplicate events are merged into one hit row.
+Also resets the per-life Final Shot state when a respawn-capable battle restores
+the player's vehicle (for example Frontline).
 """
 
 from __future__ import absolute_import
@@ -57,6 +59,21 @@ def _player_health(controller):
         return 0
 
 
+def _current_player_vehicle_id():
+    try:
+        player = BigWorld.player()
+        if player is None:
+            return 0
+        attached = getattr(player, 'vehicle', None)
+        if attached is not None:
+            attached_id = int(getattr(attached, 'id', 0) or 0)
+            if attached_id:
+                return attached_id
+        return int(getattr(player, 'playerVehicleID', 0) or 0)
+    except Exception:
+        return 0
+
+
 def _reason_key(reason_id):
     try:
         from constants import ATTACK_REASON
@@ -81,20 +98,78 @@ def _append_fallback_hit(controller, attacker_id, damage, reason_id):
     })
 
 
+def _reset_respawn_state(controller, vehicle_id, health):
+    """Drop all data from the destroyed life once the player is alive again."""
+    try:
+        viewer = getattr(controller, '_battle_viewer', None)
+        if viewer is not None:
+            viewer.close()
+    except Exception:
+        final_shot.logger.exception('failed closing Final Shot viewer on respawn')
+
+    controller.pending_show = False
+    try:
+        final_shot._cancel(getattr(controller, 'hide_callback', None))
+    except Exception:
+        pass
+    controller.hide_callback = None
+
+    try:
+        if controller.view is not None:
+            controller.view.flashObject.as_setVisible(False)
+    except Exception:
+        pass
+
+    controller.hits.clear()
+    controller.player_vehicle_id = int(vehicle_id or controller.player_vehicle_id or 0)
+    controller._final_shot_last_health = int(health or 0)
+    controller._final_shot_dead = False
+    controller._inq_authoritative_killer_id = 0
+
+    # Impact points are global for the battle. They must be cleared between lives,
+    # otherwise a later Frontline death can reuse markers from the previous tank.
+    try:
+        from gui.mods import mod_inq_final_shot_20_impacts as impacts_mod
+        impacts_mod._IMPACTS.clear()
+    except Exception:
+        pass
+
+    final_shot.logger.info(
+        'respawn detected; Final Shot state reset for vehicle id=%s health=%s',
+        controller.player_vehicle_id, controller._final_shot_last_health)
+
+
 def _on_vehicle_feedback(self, event_id, vehicle_id, value):
     if not self.in_battle or not self.config['enabled']:
         return
     if event_id != FEEDBACK_EVENT_ID.VEHICLE_HEALTH:
         return
-    if final_shot._int(vehicle_id) != self.player_vehicle_id:
-        return
+
+    feedback_vehicle_id = final_shot._int(vehicle_id)
     try:
         new_health, attacker_info, reason_id = value
     except Exception:
         return
     new_health = max(0, final_shot._int(new_health))
+
+    # Frontline and other respawn-capable modes can restore the same vehicle ID or
+    # attach the avatar to a new one. A positive health update after our own death
+    # starts a new life and must invalidate the previous Final Shot overlay/history.
+    if bool(getattr(self, '_final_shot_dead', False)) and new_health > 0:
+        current_vehicle_id = _current_player_vehicle_id()
+        if (feedback_vehicle_id == self.player_vehicle_id or
+                (current_vehicle_id and feedback_vehicle_id == current_vehicle_id)):
+            _reset_respawn_state(self, feedback_vehicle_id, new_health)
+            return
+
+    if feedback_vehicle_id != self.player_vehicle_id:
+        return
+
     previous = final_shot._int(getattr(self, '_final_shot_last_health', 0))
     self._final_shot_last_health = new_health
+    if new_health <= 0:
+        self._final_shot_dead = True
+
     damage = max(0, previous - new_health)
     if damage <= 0:
         return
@@ -166,6 +241,7 @@ def _bind_events(self, player):
         final_shot.logger.exception('feedback subscribe failed')
         self.feedback = None
     self._final_shot_last_health = _player_health(self)
+    self._final_shot_dead = self._final_shot_last_health <= 0
     try:
         self.arena = getattr(player, 'arena', None)
         if self.arena is not None:
@@ -203,6 +279,7 @@ def _unbind_events(self):
             pass
     self.feedback = self.arena = self.arena_subscription = None
     self._final_shot_last_health = 0
+    self._final_shot_dead = False
 
 
 controller = final_shot._controller
